@@ -124,6 +124,10 @@ Default thresholds are:
 - Memory: 80%
 - Disk: 85%
 
+Other configurable settings:
+
+- Alert Cooldown: 1 hour (minimum time between repeated alerts for the same issue)
+
 You can modify these in the `config.json` file.
 
 ## Logs

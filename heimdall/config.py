@@ -41,7 +41,8 @@ def load_config():
                     "memory": 80,
                     "disk": 85
                 },
-                "check_interval": 300
+                "check_interval": 300,
+                "alert_cooldown": 1
             }
             with open(CONFIG_FILE, 'w') as f:
                 json.dump(default_config, f, indent=2)

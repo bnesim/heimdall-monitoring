@@ -19,7 +19,7 @@ from email.mime.multipart import MIMEMultipart
 ALERT_STATUS_FILE = "alert_status.json"
 
 # Alert rate limiting (in hours)
-ALERT_COOLDOWN = 1
+# ALERT_COOLDOWN constant is replaced with a configurable parameter
 
 logger = logging.getLogger("Heimdall")
 
@@ -103,7 +103,10 @@ class AlertManager:
             
             hours_since_last_notification = (now - last_notified).total_seconds() / 3600
             
-            if hours_since_last_notification >= ALERT_COOLDOWN:
+            # Use the configurable alert_cooldown from config instead of hardcoded constant
+            alert_cooldown = self.config.get('alert_cooldown', 1)  # Default to 1 hour if not configured
+            
+            if hours_since_last_notification >= alert_cooldown:
                 should_send_email = True
                 self.alert_status["active_alerts"][alert_id]["last_notified"] = now_str
         

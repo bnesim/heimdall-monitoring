@@ -28,7 +28,7 @@ from email.mime.multipart import MIMEMultipart
 from heimdall.config import load_config, ServerConfig, CONFIG_FILE, SERVERS_FILE
 from heimdall.monitor import ServerMonitor
 from heimdall.utils import setup_logging, Colors, LOG_FILE
-from heimdall.alerts import AlertManager, ALERT_STATUS_FILE, ALERT_COOLDOWN
+from heimdall.alerts import AlertManager, ALERT_STATUS_FILE
 
 # Load configuration
 def load_config():
