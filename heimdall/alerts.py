@@ -13,13 +13,11 @@ import logging
 import smtplib
 from datetime import datetime
 from email.mime.text import MIMEText
+from email.mime.image import MIMEImage
 from email.mime.multipart import MIMEMultipart
 
 # Alert status file
 ALERT_STATUS_FILE = "alert_status.json"
-
-# Alert rate limiting (in hours)
-# ALERT_COOLDOWN constant is replaced with a configurable parameter
 
 logger = logging.getLogger("Heimdall")
 
@@ -58,6 +56,7 @@ class AlertManager:
         
         # Log to file
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        os.makedirs('logs', exist_ok=True)
         with open("logs/alerts.log", "a") as log:
             log.write(f"[{timestamp}] {nickname} ({hostname}): {message}\n")
         
@@ -103,7 +102,7 @@ class AlertManager:
             
             hours_since_last_notification = (now - last_notified).total_seconds() / 3600
             
-            # Use the configurable alert_cooldown from config instead of hardcoded constant
+            # Use the configurable alert_cooldown from config
             alert_cooldown = self.config.get('alert_cooldown', 1)  # Default to 1 hour if not configured
             
             if hours_since_last_notification >= alert_cooldown:
@@ -115,7 +114,15 @@ class AlertManager:
         
         # Send email if enabled and needed
         if self.config and self.config.get('email', {}).get('enabled', False) and should_send_email:
-            self._send_email_alert(nickname, hostname, message, is_new_alert)
+            self._send_email_alert(nickname, hostname, message, is_new_alert, alert_cooldown)
+            return True
+        else:
+            if not should_send_email and alert_id in self.alert_status["active_alerts"]:
+                logger.info(f"Alert {alert_id} logged but email suppressed (rate limited)")
+                return False
+            else:
+                logger.info(f"Alert {alert_id} logged (email alerts disabled)")
+                return False
     
     def check_alert_resolution(self, nickname, hostname, metric, current_value, threshold):
         """Check if an alert has been resolved."""
@@ -125,18 +132,22 @@ class AlertManager:
             if current_value < threshold:
                 # Alert is resolved
                 alert = self.alert_status["active_alerts"].pop(alert_id)
+                alert["resolved_time"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                 self.alert_status["resolved_alerts"][alert_id] = alert
-                self.alert_status["resolved_alerts"][alert_id]["resolved_at"] = \
-                    datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                 
                 # Save updated status
                 self.save_alert_status()
                 
+                # Log resolution
+                logger.info(f"{nickname} ({hostname}): {metric} alert resolved - now at {current_value:.1f}%, below threshold of {threshold}%")
+                
                 # Send resolution notification
                 if self.config and self.config.get('email', {}).get('enabled', False):
-                    self._send_resolution_email(nickname, hostname, metric, current_value)
+                    self._send_resolution_email(nickname, hostname, metric, current_value, threshold, alert)
+                    return True
+        return False
     
-    def _send_email_alert(self, nickname, hostname, message, is_new_alert):
+    def _send_email_alert(self, nickname, hostname, message, is_new_alert, alert_cooldown):
         """Send an alert email."""
         try:
             msg = MIMEMultipart('alternative')
@@ -152,29 +163,43 @@ class AlertManager:
             <html>
               <head>
                 <style>
-                  body {{ font-family: Arial, sans-serif; line-height: 1.6; color: #333; }}
-                  .container {{ max-width: 600px; margin: 0 auto; padding: 20px; }}
-                  .header {{ text-align: center; margin-bottom: 20px; }}
-                  .logo {{ max-width: 200px; }}
-                  h2 {{ color: #cc3300; }}
-                  .alert-info {{ background-color: #f8f8f8; padding: 15px; border-left: 4px solid #cc3300; }}
-                  .footer {{ margin-top: 30px; font-size: 12px; color: #777; text-align: center; }}
+                  body {{ font-family: Arial, sans-serif; line-height: 1.6; color: #333; background-color: #f9f9f9; margin: 0; padding: 0; }}
+                  .container {{ max-width: 600px; margin: 20px auto; padding: 20px; background-color: #fff; border-radius: 5px; border-top: 5px solid #ff3860; box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1); }}
+                  h1 {{ color: #ff3860; margin-top: 0; }}
+                  .logo {{ text-align: center; margin-bottom: 20px; }}
+                  .logo img {{ width: 150px; height: auto; }}
+                  .server-info {{ background-color: #f5f5f5; padding: 15px; border-radius: 4px; margin: 20px 0; }}
+                  .server-name {{ font-size: 18px; font-weight: bold; color: #333; }}
+                  .server-hostname {{ color: #777; font-family: monospace; }}
+                  .alert-message {{ font-size: 18px; color: #ff3860; background-color: #ffeeee; padding: 10px; border-radius: 4px; margin: 15px 0; }}
+                  .timestamp {{ color: #777; font-size: 14px; margin-top: 20px; }}
+                  .footer {{ margin-top: 30px; padding-top: 20px; border-top: 1px solid #eee; font-size: 12px; color: #777; }}
                 </style>
               </head>
               <body>
                 <div class="container">
-                  <div class="header">
-                    <img src="https://raw.githubusercontent.com/bnesim/heimdall-monitoring/refs/heads/main/HEIMDALL.png" alt="Heimdall Logo" class="logo">
+                  <div class="logo">
+                    <img src="https://raw.githubusercontent.com/bnesim/heimdall-monitoring/refs/heads/main/HEIMDALL.png" alt="Heimdall Logo">
                   </div>
-                  <h2>Heimdall Alert</h2>
-                  <div class="alert-info">
-                    <p><strong>Server:</strong> {nickname} ({hostname})</p>
-                    <p><strong>Alert:</strong> {message}</p>
-                    <p><strong>Time:</strong> {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}</p>
-                    <p>Please investigate this issue as soon as possible.</p>
+                  <h1>⚠️ Heimdall Server Alert ⚠️</h1>
+                  <p>Heimdall has detected an issue that requires your attention.</p>
+                  
+                  <div class="server-info">
+                    <div class="server-name">{nickname}</div>
+                    <div class="server-hostname">{hostname}</div>
                   </div>
+                  
+                  <div class="alert-message">
+                    {message}
+                  </div>
+                  
+                  <div class="timestamp">
+                    Detected: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
+                  </div>
+                  
                   <div class="footer">
-                    <p>This is an automated message from Heimdall Monitoring System.</p>
+                    This is an automated message from Heimdall, the all-seeing guardian of your servers.
+                    <br>You will not receive another notification about this issue for at least {alert_cooldown} hour(s).
                   </div>
                 </div>
               </body>
@@ -192,53 +217,90 @@ class AlertManager:
                            self.config['email']['password'])
                 server.send_message(msg)
             
-            logger.info(f"Sent alert email for {nickname}")
+            logger.info(f"Alert email sent to {msg['To']}")
+            return True
         except Exception as e:
             logger.error(f"Failed to send alert email: {str(e)}")
+            return False
     
-    def _send_resolution_email(self, nickname, hostname, metric, current_value):
+    def _send_resolution_email(self, nickname, hostname, metric, current_value, threshold, alert_info):
         """Send an alert resolution email."""
         try:
             msg = MIMEMultipart('alternative')
             msg['From'] = self.config['email']['sender']
             msg['To'] = ", ".join(self.config['email']['recipients'])
-            msg['Subject'] = f"HEIMDALL RESOLVED: {nickname} - {metric}"
+            msg['Subject'] = f"HEIMDALL RESOLVED: {nickname} - {metric} issue resolved"
+            
+            # Calculate problem duration
+            first_detected = datetime.strptime(alert_info["first_detected"], "%Y-%m-%d %H:%M:%S")
+            resolved_time = datetime.strptime(alert_info["resolved_time"], "%Y-%m-%d %H:%M:%S")
+            duration = resolved_time - first_detected
+            hours, remainder = divmod(duration.seconds, 3600)
+            minutes, seconds = divmod(remainder, 60)
+            duration_str = f"{duration.days} days, {hours} hours, {minutes} minutes" if duration.days > 0 else f"{hours} hours, {minutes} minutes"
             
             # Create HTML version of the message with logo from GitHub URL
             html = f"""
             <html>
-              <head>
+            <head>
                 <style>
-                  body {{ font-family: Arial, sans-serif; line-height: 1.6; color: #333; }}
-                  .container {{ max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #ddd; border-radius: 5px; }}
-                  .header {{ text-align: center; margin-bottom: 20px; }}
-                  .logo {{ max-width: 200px; }}
-                  h2 {{ color: #2c7a2c; font-size: 24px; margin-bottom: 20px; text-align: center; }}
-                  .alert-info {{ background-color: #f8f8f8; padding: 15px; border-left: 4px solid #2c7a2c; margin-bottom: 20px; }}
-                  .server-info {{ font-weight: bold; margin-bottom: 10px; }}
-                  .resolution-message {{ color: #2c7a2c; font-weight: bold; }}
-                  .footer {{ margin-top: 30px; font-size: 12px; color: #777; text-align: center; border-top: 1px solid #eee; padding-top: 15px; }}
+                    body {{ font-family: Arial, sans-serif; line-height: 1.6; color: #333; background-color: #f9f9f9; margin: 0; padding: 0; }}
+                    .container {{ max-width: 600px; margin: 20px auto; padding: 20px; background-color: #fff; border-radius: 5px; border-top: 5px solid #48c774; box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1); }}
+                    h1 {{ color: #48c774; margin-top: 0; }}
+                    .logo {{ text-align: center; margin-bottom: 20px; }}
+                    .logo img {{ width: 150px; height: auto; }}
+                    .server-info {{ background-color: #f5f5f5; padding: 15px; border-radius: 4px; margin: 20px 0; }}
+                    .server-name {{ font-size: 18px; font-weight: bold; color: #333; }}
+                    .server-hostname {{ color: #777; font-family: monospace; }}
+                    .resolve-message {{ font-size: 18px; color: #48c774; background-color: #effaf5; padding: 10px; border-radius: 4px; margin: 15px 0; }}
+                    .alert-details {{ background-color: #f5f5f5; padding: 12px; border-radius: 4px; margin: 15px 0; font-size: 14px; }}
+                    .detail-row {{ display: flex; justify-content: space-between; margin-bottom: 5px; border-bottom: 1px solid #eee; padding-bottom: 5px; }}
+                    .detail-label {{ font-weight: bold; }}
+                    .timestamp {{ color: #777; font-size: 14px; margin-top: 20px; }}
+                    .footer {{ margin-top: 30px; padding-top: 20px; border-top: 1px solid #eee; font-size: 12px; color: #777; }}
                 </style>
-              </head>
-              <body>
+            </head>
+            <body>
                 <div class="container">
-                  <div class="header">
-                    <img src="https://raw.githubusercontent.com/bnesim/heimdall-monitoring/refs/heads/main/HEIMDALL.png" alt="Heimdall Logo" class="logo">
-                  </div>
-                  <h2>Heimdall Alert Resolution</h2>
-                  <div class="alert-info">
-                    <div class="server-info">
-                      <p><strong>Server:</strong> {nickname} ({hostname})</p>
+                    <div class="logo">
+                        <img src="https://raw.githubusercontent.com/bnesim/heimdall-monitoring/refs/heads/main/HEIMDALL.png" alt="Heimdall Logo">
                     </div>
-                    <p class="resolution-message"><strong>Resolved Issue:</strong> {metric} is now at {current_value:.1f}%</p>
-                    <p><strong>Time:</strong> {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}</p>
-                    <p>The previously reported issue has been resolved. No further action is required.</p>
-                  </div>
-                  <div class="footer">
-                    <p>This is an automated message from Heimdall Monitoring System.</p>
-                  </div>
+                    <h1>✅ Alert Resolved</h1>
+                    <p>Heimdall has detected that a previous alert has been resolved.</p>
+                    
+                    <div class="server-info">
+                        <div class="server-name">{nickname}</div>
+                        <div class="server-hostname">{hostname}</div>
+                    </div>
+                    
+                    <div class="resolve-message">
+                        {metric} usage has returned to normal levels: {current_value:.1f}% (threshold: {threshold}%)
+                    </div>
+                    
+                    <div class="alert-details">
+                        <div class="detail-row">
+                            <span class="detail-label">First Detected:</span>
+                            <span>{alert_info["first_detected"]}</span>
+                        </div>
+                        <div class="detail-row">
+                            <span class="detail-label">Resolved:</span>
+                            <span>{alert_info["resolved_time"]}</span>
+                        </div>
+                        <div class="detail-row">
+                            <span class="detail-label">Duration:</span>
+                            <span>{duration_str}</span>
+                        </div>
+                        <div class="detail-row">
+                            <span class="detail-label">Original Issue:</span>
+                            <span>{alert_info["message"]}</span>
+                        </div>
+                    </div>
+                    
+                    <div class="footer">
+                        This is an automated message from Heimdall, the all-seeing guardian of your servers.
+                    </div>
                 </div>
-              </body>
+            </body>
             </html>
             """
             
@@ -252,6 +314,44 @@ class AlertManager:
                            self.config['email']['password'])
                 server.send_message(msg)
             
-            logger.info(f"Sent resolution email for {nickname} - {metric}")
+            logger.info(f"Resolution email sent to {msg['To']}")
+            return True
         except Exception as e:
             logger.error(f"Failed to send resolution email: {str(e)}")
+            return False
+            
+    def send_test_email(self):
+        """Send a test email to verify SMTP settings."""
+        try:
+            msg = MIMEMultipart()
+            msg['From'] = self.config['email']['sender']
+            msg['To'] = ", ".join(self.config['email']['recipients'])
+            msg['Subject'] = "HEIMDALL TEST EMAIL"
+            
+            body = f'''
+            This is a test email from Heimdall Monitoring System.
+            
+            Time: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
+            
+            If you're receiving this, your SMTP configuration is working correctly!
+            '''
+            
+            msg.attach(MIMEText(body, 'plain'))
+            
+            # Connect to SMTP server and send email
+            server = smtplib.SMTP(self.config['email']['smtp_server'], self.config['email']['smtp_port'])
+            
+            if self.config['email']['use_tls']:
+                server.starttls()
+            
+            if self.config['email']['username'] and self.config['email']['password']:
+                server.login(self.config['email']['username'], self.config['email']['password'])
+            
+            server.send_message(msg)
+            server.quit()
+            
+            logger.info("Test email sent successfully")
+            return True
+        except Exception as e:
+            logger.error(f"Failed to send test email: {str(e)}")
+            return False
