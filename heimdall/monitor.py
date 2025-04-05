@@ -4,7 +4,7 @@
 """Server monitoring module for Heimdall.
 
 This module handles the core server monitoring functionality,
-including SSH connections and resource checks.
+including SSH connections, resource checks, and service monitoring.
 """
 
 import os
@@ -62,8 +62,119 @@ class ServerMonitor:
             print(Colors.red(f"SSH connection error: {str(e)}"))
             return False
     
+    def get_running_services(self, client):
+        """Get a list of running services on the server."""
+        try:
+            # Use systemctl to list running services on systemd-based systems
+            stdin, stdout, stderr = client.exec_command("systemctl list-units --type=service --state=running | grep \".service\" | awk '{print $1}'")
+            systemd_services = stdout.read().decode('utf-8').strip().split('\n')
+            
+            # If no systemd services found, try using service command for older systems
+            if not systemd_services or systemd_services == ['']:
+                stdin, stdout, stderr = client.exec_command("service --status-all 2>&1 | grep '\[ + \]' | awk '{print $4}'")
+                sysv_services = stdout.read().decode('utf-8').strip().split('\n')
+                if sysv_services and sysv_services != ['']:
+                    return sysv_services
+            else:
+                return [s.replace('.service', '') for s in systemd_services if s]
+                
+            # As a last resort, try using ps to find processes that might be services
+            stdin, stdout, stderr = client.exec_command("ps -eo comm= | sort | uniq")
+            processes = stdout.read().decode('utf-8').strip().split('\n')
+            return [p for p in processes if p and not p.startswith('[')][:20]  # Limit to first 20 to avoid overwhelming
+            
+        except Exception as e:
+            logger.error(f"Error getting running services: {str(e)}")
+            return []
+    
+    def select_services_to_monitor(self, hostname, port, username, password=None, key_path=None):
+        """Connect to server and let user select which services to monitor."""
+        try:
+            client = paramiko.SSHClient()
+            client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+            
+            # Connection parameters
+            connect_params = {
+                'hostname': hostname,
+                'port': port,
+                'username': username,
+                'timeout': 5
+            }
+            
+            # Try SSH key authentication if key_path is provided
+            if key_path:
+                if os.path.exists(key_path):
+                    connect_params['key_filename'] = key_path
+                else:
+                    logger.warning(f"SSH key file not found: {key_path}")
+                    # Fall back to password if provided
+                    if password:
+                        connect_params['password'] = password
+            # Otherwise use password authentication
+            elif password:
+                connect_params['password'] = password
+            
+            client.connect(**connect_params)
+            
+            # Get running services
+            services = self.get_running_services(client)
+            client.close()
+            
+            if not services:
+                print(Colors.yellow("No services found on the server."))
+                return []
+            
+            print(f"\n{Colors.bold(Colors.blue('Select services to monitor:'))}")
+            print("Select services by entering their numbers separated by spaces.")
+            print("For example: 1 3 5")
+            
+            # Display services with numbers
+            for i, service in enumerate(services):
+                print(f"  {i+1}. {service}")
+            
+            # Get user selection
+            selection = input("\nEnter numbers of services to monitor (or 'all' for all): ").strip()
+            
+            if selection.lower() == 'all':
+                return services
+            
+            try:
+                selected_indices = [int(x) - 1 for x in selection.split()]
+                return [services[i] for i in selected_indices if 0 <= i < len(services)]
+            except (ValueError, IndexError):
+                print(Colors.red("Invalid selection. No services will be monitored."))
+                return []
+                
+        except Exception as e:
+            logger.error(f"Error connecting to server to select services: {str(e)}")
+            print(Colors.red(f"Error connecting to server: {str(e)}"))
+            return []
+    
+    def check_service_status(self, client, service):
+        """Check if a service is running on the server."""
+        try:
+            # Try systemctl first (for systemd systems)
+            stdin, stdout, stderr = client.exec_command(f"systemctl is-active {service} 2>/dev/null || echo 'inactive'")
+            status = stdout.read().decode('utf-8').strip()
+            
+            if status == 'inactive':
+                # Try service command for older systems
+                stdin, stdout, stderr = client.exec_command(f"service {service} status 2>/dev/null | grep -q 'running' && echo 'active' || echo 'inactive'")
+                status = stdout.read().decode('utf-8').strip()
+                
+                if status == 'inactive':
+                    # Last resort: check if process is running
+                    stdin, stdout, stderr = client.exec_command(f"ps -ef | grep -v grep | grep -q '{service}' && echo 'active' || echo 'inactive'")
+                    status = stdout.read().decode('utf-8').strip()
+            
+            return status == 'active'
+            
+        except Exception as e:
+            logger.error(f"Error checking service status for {service}: {str(e)}")
+            return False
+    
     def check_server(self, server):
-        """Check a single server for CPU, memory and disk usage."""
+        """Check a single server for CPU, memory, disk usage, and monitored services."""
         hostname = server['hostname']
         port = server['port']
         username = server['username']
@@ -206,6 +317,31 @@ class ServerMonitor:
             else:
                 logger.error(f"{nickname} ({hostname}): Failed to get disk data")
                 print(Colors.red("  Failed to get Disk data"))
+            
+            # Check monitored services if any are configured
+            if 'monitored_services' in server and server['monitored_services']:
+                print(f"\nMonitored Services:")
+                services_down = []
+                
+                for service in server['monitored_services']:
+                    print(f"  {service}: ", end='')
+                    is_running = self.check_service_status(client, service)
+                    
+                    if is_running:
+                        print(Colors.green("Running"))
+                        # Check if this resolves an existing alert
+                        self.alert_manager.check_alert_resolution(nickname, hostname, 
+                            f"Service ({service})", 0, 1)
+                    else:
+                        print(Colors.red("Not Running"))
+                        services_down.append(service)
+                        alert_msg = f"Service {service} is not running"
+                        logger.warning(f"{nickname} ({hostname}): {alert_msg}")
+                        self.alert_manager.send_alert(nickname, hostname, alert_msg, 
+                            alert_type=f"service:{service}")
+                
+                if not services_down:
+                    print(Colors.green("All monitored services are running"))
             
             client.close()
             return True

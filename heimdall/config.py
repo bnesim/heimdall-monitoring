@@ -80,9 +80,24 @@ class ServerConfig:
     
     def add_server(self, server_data):
         """Add a new server to the configuration."""
+        # Ensure monitored_services is included in the server data
+        if 'monitored_services' not in server_data:
+            server_data['monitored_services'] = []
+            
         self.servers.append(server_data)
         self.save_servers()
         logger.info(f"Added new server: {server_data['nickname']} ({server_data['hostname']})")
+    
+    def update_server_services(self, nickname, services):
+        """Update the monitored services for a server."""
+        for server in self.servers:
+            if server['nickname'] == nickname:
+                server['monitored_services'] = services
+                self.save_servers()
+                logger.info(f"Updated monitored services for {nickname}: {', '.join(services)}")
+                return True
+        logger.warning(f"Server not found for service update: {nickname}")
+        return False
     
     def remove_server(self, nickname):
         """Remove a server from the configuration."""

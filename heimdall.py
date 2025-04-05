@@ -134,10 +134,7 @@ class ServerMonitor:
         port_input = input("SSH Port (default: 22): ").strip()
         port = 22 if not port_input else int(port_input)
         
-        username = input("Username: ").strip()
-        if not username:
-            print(f"{Colors.RED}Error: Username cannot be empty{Colors.END}")
-            return
+        username = input("Username (default: root): ").strip() or "root"
         
         # Ask for authentication method
         print(f"\n{Colors.BLUE}Authentication Method:{Colors.END}")
@@ -199,13 +196,45 @@ class ServerMonitor:
                 nickname = hostname
                 print(f"\nCouldn't detect hostname, using: {Colors.YELLOW}{nickname}{Colors.END}")
             
+            # Get services to monitor
+            print(f"\n{Colors.BLUE}Select services to monitor:{Colors.END}")
+            print("Connecting to server to get running services...")
+            
+            # Create a temporary ServerMonitor to get services
+            temp_monitor = ServerMonitor()
+            services = temp_monitor.get_running_services(client)
+            
             client.close()
+            
+            monitored_services = []
+            if services:
+                print("\nSelect services by entering their numbers separated by spaces.")
+                print("For example: 1 3 5")
+                
+                # Display services with numbers
+                for i, service in enumerate(services):
+                    print(f"  {i+1}. {service}")
+                
+                # Get user selection
+                selection = input("\nEnter numbers of services to monitor (or 'all' for all, or 'none' for none): ").strip()
+                
+                if selection.lower() == 'all':
+                    monitored_services = services
+                elif selection.lower() != 'none':
+                    try:
+                        selected_indices = [int(x) - 1 for x in selection.split()]
+                        monitored_services = [services[i] for i in selected_indices if 0 <= i < len(services)]
+                    except (ValueError, IndexError):
+                        print(f"{Colors.YELLOW}Invalid selection. No services will be monitored.{Colors.END}")
+            else:
+                print(f"{Colors.YELLOW}No services found on the server.{Colors.END}")
             
             server = {
                 'hostname': hostname,
                 'port': port,
                 'username': username,
-                'nickname': nickname
+                'nickname': nickname,
+                'monitored_services': monitored_services
             }
             
             # Add authentication details
@@ -217,7 +246,11 @@ class ServerMonitor:
             self.servers.append(server)
             self.save_servers()
             logger.info(f"Added new server: {nickname} ({hostname})")
-            print(f"\n{Colors.GREEN}Server '{nickname}' added successfully!{Colors.END}")
+            
+            if monitored_services:
+                print(f"\n{Colors.GREEN}Server '{nickname}' added successfully with {len(monitored_services)} monitored services!{Colors.END}")
+            else:
+                print(f"\n{Colors.GREEN}Server '{nickname}' added successfully!{Colors.END}")
             return True
         except Exception as e:
             logger.error(f"SSH connection error to {hostname}: {str(e)}")
@@ -236,18 +269,29 @@ class ServerMonitor:
         
         self.list_servers()
         
-        nickname = input("\nEnter the nickname of the server to remove: ").strip()
+        selection = input("\nEnter the number of the server to remove: ").strip()
         
-        for i, server in enumerate(self.servers):
-            if server['nickname'] == nickname:
-                del self.servers[i]
+        # Find the server by number
+        try:
+            index = int(selection) - 1  # Convert to 0-based index
+            if 0 <= index < len(self.servers):
+                server = self.servers[index]
+                nickname = server['nickname']  # Get the nickname for later use
+                
+                # Remove the server
+                del self.servers[index]
                 self.save_servers()
                 logger.info(f"Removed server: {nickname}")
                 print(f"\n{Colors.GREEN}Server '{nickname}' removed successfully!{Colors.END}")
                 return
-                
-        logger.warning(f"Server not found: {nickname}")
-        print(f"\n{Colors.RED}Server with nickname '{nickname}' not found!{Colors.END}")
+            else:
+                logger.warning(f"Server index out of range: {selection}")
+                print(f"\n{Colors.RED}Invalid server number. Please enter a number between 1 and {len(self.servers)}.{Colors.END}")
+                return
+        except ValueError:
+            logger.warning(f"Invalid server selection: {selection}")
+            print(f"\n{Colors.RED}Please enter a valid server number.{Colors.END}")
+            return
 
     def list_servers(self):
         """List all configured servers"""
@@ -261,12 +305,59 @@ class ServerMonitor:
         for i, server in enumerate(self.servers):
             print(f"  {i+1}. {Colors.BOLD}{server['nickname']}{Colors.END} - {server['hostname']}:{server['port']} ({server['username']})")
 
-    def test_ssh_connection(self, hostname, port, username, password):
-        """Test SSH connection to a server"""
+    def get_running_services(self, client):
+        """Get a list of running services on the server."""
+        try:
+            # Use systemctl to list running services on systemd-based systems
+            stdin, stdout, stderr = client.exec_command("systemctl list-units --type=service --state=running | grep \".service\" | awk '{print $1}'")
+            systemd_services = stdout.read().decode('utf-8').strip().split('\n')
+            
+            # If no systemd services found, try using service command for older systems
+            if not systemd_services or systemd_services == ['']:
+                stdin, stdout, stderr = client.exec_command("service --status-all 2>&1 | grep '\[ + \]' | awk '{print $4}'")
+                sysv_services = stdout.read().decode('utf-8').strip().split('\n')
+                if sysv_services and sysv_services != ['']:
+                    return sysv_services
+            else:
+                return [s.replace('.service', '') for s in systemd_services if s]
+                
+            # As a last resort, try using ps to find processes that might be services
+            stdin, stdout, stderr = client.exec_command("ps -eo comm= | sort | uniq")
+            processes = stdout.read().decode('utf-8').strip().split('\n')
+            return [p for p in processes if p and not p.startswith('[')][:20]  # Limit to first 20 to avoid overwhelming
+            
+        except Exception as e:
+            logger.error(f"Error getting running services: {str(e)}")
+            return []
+    
+    def test_ssh_connection(self, hostname, port, username, password=None, key_path=None):
+        """Test SSH connection to a server using password or SSH key"""
         try:
             client = paramiko.SSHClient()
             client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-            client.connect(hostname, port=port, username=username, password=password, timeout=5)
+            
+            # Connection parameters
+            connect_params = {
+                'hostname': hostname,
+                'port': port,
+                'username': username,
+                'timeout': 5
+            }
+            
+            # Try SSH key authentication if key_path is provided
+            if key_path:
+                if os.path.exists(key_path):
+                    connect_params['key_filename'] = key_path
+                else:
+                    logger.warning(f"SSH key file not found: {key_path}")
+                    # Fall back to password if provided
+                    if password:
+                        connect_params['password'] = password
+            # Otherwise use password authentication
+            elif password:
+                connect_params['password'] = password
+            
+            client.connect(**connect_params)
             client.close()
             return True
         except Exception as e:
@@ -279,7 +370,8 @@ class ServerMonitor:
         hostname = server['hostname']
         port = server['port']
         username = server['username']
-        password = server['password']
+        password = server.get('password')
+        key_path = server.get('key_path')
         nickname = server['nickname']
         
         print(f"\n{Colors.YELLOW}{Colors.BOLD}Checking server: {Colors.GREEN}{nickname}{Colors.END} ({hostname})")
@@ -301,7 +393,28 @@ class ServerMonitor:
             client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
             
             print(f"SSH Connection: ", end='')
-            client.connect(hostname, port=port, username=username, password=password, timeout=5)
+            
+            # Connection parameters
+            connect_params = {
+                'hostname': hostname,
+                'port': port,
+                'username': username,
+                'timeout': 5
+            }
+            
+            # Try SSH key authentication if key_path is provided
+            if key_path:
+                if os.path.exists(key_path):
+                    connect_params['key_filename'] = key_path
+                else:
+                    logger.warning(f"SSH key file not found: {key_path}, falling back to password")
+                    if password:
+                        connect_params['password'] = password
+            # Otherwise use password authentication
+            elif password:
+                connect_params['password'] = password
+            
+            client.connect(**connect_params)
             print(f"{Colors.GREEN}Success{Colors.END}")
             
             # Check CPU usage
@@ -396,6 +509,43 @@ class ServerMonitor:
             else:
                 logger.error(f"{nickname} ({hostname}): Failed to get disk data")
                 print(f"  {Colors.RED}Failed to get Disk data{Colors.END}")
+            
+            # Check monitored services if any are configured
+            if 'monitored_services' in server and server['monitored_services']:
+                print(f"\nMonitored Services:")
+                services_down = []
+                
+                for service in server['monitored_services']:
+                    print(f"  {service}: ", end='')
+                    
+                    # Check if service is running
+                    # Try systemctl first (for systemd systems)
+                    stdin, stdout, stderr = client.exec_command(f"systemctl is-active {service} 2>/dev/null || echo 'inactive'")
+                    status = stdout.read().decode('utf-8').strip()
+                    
+                    if status == 'inactive':
+                        # Try service command for older systems
+                        stdin, stdout, stderr = client.exec_command(f"service {service} status 2>/dev/null | grep -q 'running' && echo 'active' || echo 'inactive'")
+                        status = stdout.read().decode('utf-8').strip()
+                        
+                        if status == 'inactive':
+                            # Last resort: check if process is running
+                            stdin, stdout, stderr = client.exec_command(f"ps -ef | grep -v grep | grep -q '{service}' && echo 'active' || echo 'inactive'")
+                            status = stdout.read().decode('utf-8').strip()
+                    
+                    is_running = (status == 'active')
+                    
+                    if is_running:
+                        print(f"{Colors.GREEN}Running{Colors.END}")
+                    else:
+                        print(f"{Colors.RED}Not Running{Colors.END}")
+                        services_down.append(service)
+                        alert_msg = f"Service {service} is not running"
+                        logger.warning(f"{nickname} ({hostname}): {alert_msg}")
+                        self.send_alert(nickname, hostname, alert_msg, alert_type=f"service:{service}")
+                
+                if not services_down:
+                    print(f"{Colors.GREEN}All monitored services are running{Colors.END}")
                 
             client.close()
             return True
@@ -861,6 +1011,116 @@ class ServerMonitor:
             logger.error(f"Failed to send resolution email: {str(e)}")
             print(f"{Colors.RED}Failed to send resolution email: {str(e)}{Colors.END}")
 
+    def edit_server(self):
+        """Edit a server to add/remove monitored services"""
+        if not self.servers:
+            print(f"\n{Colors.YELLOW}No servers configured yet.{Colors.END}")
+            return
+            
+        print(f"\n{Colors.BLUE}{Colors.BOLD}Edit Server{Colors.END}")
+        print("="*20)
+        
+        self.list_servers()
+        
+        selection = input("\nEnter the number of the server to edit: ").strip()
+        
+        # Find the server by number
+        try:
+            index = int(selection) - 1  # Convert to 0-based index
+            if 0 <= index < len(self.servers):
+                server = self.servers[index]
+                nickname = server['nickname']  # Get the nickname for later use
+            else:
+                logger.warning(f"Server index out of range: {selection}")
+                print(f"\n{Colors.RED}Invalid server number. Please enter a number between 1 and {len(self.servers)}.{Colors.END}")
+                return
+        except ValueError:
+            logger.warning(f"Invalid server selection: {selection}")
+            print(f"\n{Colors.RED}Please enter a valid server number.{Colors.END}")
+            return
+        
+        # Connect to the server
+        hostname = server['hostname']
+        port = server['port']
+        username = server['username']
+        password = server.get('password')
+        key_path = server.get('key_path')
+        
+        print(f"\nConnecting to {hostname}:{port} with user {username}...")
+        
+        try:
+            client = paramiko.SSHClient()
+            client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+            
+            # Connection parameters
+            connect_params = {
+                'hostname': hostname,
+                'port': port,
+                'username': username,
+                'timeout': 5
+            }
+            
+            # Try SSH key authentication if key_path is provided
+            if key_path and os.path.exists(key_path):
+                connect_params['key_filename'] = key_path
+            elif password:
+                connect_params['password'] = password
+            else:
+                print(f"{Colors.RED}Error: No valid authentication method available.{Colors.END}")
+                return
+                
+            client.connect(**connect_params)
+            
+            # Get running services
+            print(f"\n{Colors.BLUE}Getting running services...{Colors.END}")
+            services = self.get_running_services(client)
+            
+            if not services:
+                print(f"{Colors.YELLOW}No services found on the server.{Colors.END}")
+                client.close()
+                return
+            
+            # Get currently monitored services
+            current_monitored = server.get('monitored_services', [])
+            
+            print(f"\n{Colors.GREEN}Select services to monitor:{Colors.END}")
+            print("Select services by entering their numbers separated by spaces.")
+            print("For example: 1 3 5")
+            
+            # Display services with numbers and monitoring status
+            for i, service in enumerate(services):
+                status = "[X]" if service in current_monitored else "[ ]"
+                print(f"  {i+1}. {status} {service}")
+            
+            # Get user selection
+            selection = input("\nEnter numbers of services to monitor (or 'all' for all, or 'none' for none): ").strip()
+            
+            monitored_services = []
+            if selection.lower() == 'all':
+                monitored_services = services
+            elif selection.lower() != 'none':
+                try:
+                    selected_indices = [int(x) - 1 for x in selection.split()]
+                    monitored_services = [services[i] for i in selected_indices if 0 <= i < len(services)]
+                except (ValueError, IndexError):
+                    print(f"{Colors.YELLOW}Invalid selection. No changes made.{Colors.END}")
+                    client.close()
+                    return
+            
+            # Update the server's monitored services
+            server['monitored_services'] = monitored_services
+            self.save_servers()
+            
+            client.close()
+            
+            logger.info(f"Updated monitored services for {nickname}: {len(monitored_services)} services")
+            print(f"\n{Colors.GREEN}Server '{nickname}' updated successfully with {len(monitored_services)} monitored services!{Colors.END}")
+            
+        except Exception as e:
+            logger.error(f"Error editing server {nickname}: {str(e)}")
+            print(f"\n{Colors.RED}Failed to connect to server: {str(e)}{Colors.END}")
+            print(f"\n{Colors.RED}Server not updated.{Colors.END}")
+
     def interactive_menu(self):
         """Display interactive menu"""
         while True:
@@ -868,10 +1128,11 @@ class ServerMonitor:
             print("="*30)
             print("1. Add a new server")
             print("2. Remove a server")
-            print("3. List all servers")
-            print("4. Check all servers")
-            print("5. Configure SMTP settings")
-            print("6. Exit")
+            print("3. Edit a server (add/remove services)")
+            print("4. List all servers")
+            print("5. Check all servers")
+            print("6. Configure SMTP settings")
+            print("7. Exit")
             
             option = input("\nSelect an option: ").strip()
             
@@ -880,12 +1141,14 @@ class ServerMonitor:
             elif option == '2':
                 self.remove_server()
             elif option == '3':
-                self.list_servers()
+                self.edit_server()
             elif option == '4':
-                self.check_all_servers()
+                self.list_servers()
             elif option == '5':
-                configure_smtp()
+                self.check_all_servers()
             elif option == '6':
+                configure_smtp()
+            elif option == '7':
                 print(f"\n{Colors.GREEN}Heimdall will continue watching your realms from Asgard. Farewell!{Colors.END}")
                 logger.info("Exiting Heimdall")
                 break
