@@ -290,23 +290,43 @@ class ServerMonitor:
                         mount_point = parts[5] if len(parts) >= 6 else parts[0]
                         usage_str = parts[4].rstrip('%')
                         
-                        try:
-                            disk_usage = float(usage_str)
-                            
-                            if disk_usage >= self.disk_threshold:
-                                critical_disks.append({
-                                    "mount": mount_point,
-                                    "usage": disk_usage,
-                                    "filesystem": filesystem
-                                })
-                                print(f"  {mount_point}: {Colors.red(f'{disk_usage:.1f}% (ALERT - above threshold)')}")
-                            else:
-                                print(f"  {mount_point}: {Colors.green(f'{disk_usage:.1f}%')}")
-                                self.alert_manager.check_alert_resolution(
-                                    nickname, hostname, f"Disk ({mount_point})",
-                                    disk_usage, self.disk_threshold)
-                        except ValueError:
-                            print(f"  {mount_point}: {Colors.yellow('Unable to parse usage')}")
+                        # Skip monitoring for special filesystems that are expected to be full
+                        should_skip = False
+                        
+                        # Skip snap package mount points (read-only squashfs filesystems)
+                        if '/snap/' in mount_point or mount_point.startswith('/snap/'):
+                            should_skip = True
+                            logger.debug(f"Skipping snap mount point: {mount_point}")
+                            print(f"  {mount_point}: {Colors.yellow(f'Skipped (snap package)')}")                            
+                        # Skip other special filesystems that are typically at high usage
+                        elif any(special in mount_point for special in ['/var/lib/snapd/', '/boot/efi']):
+                            should_skip = True
+                            logger.debug(f"Skipping special filesystem: {mount_point}")
+                            print(f"  {mount_point}: {Colors.yellow(f'Skipped (special filesystem)')}")                            
+                        # Skip if filesystem is squashfs (typically read-only and 100% full)
+                        elif 'squashfs' in filesystem.lower():
+                            should_skip = True
+                            logger.debug(f"Skipping squashfs filesystem: {filesystem} at {mount_point}")
+                            print(f"  {mount_point}: {Colors.yellow(f'Skipped (squashfs)')}")                            
+                        
+                        if not should_skip:
+                            try:
+                                disk_usage = float(usage_str)
+                                
+                                if disk_usage >= self.disk_threshold:
+                                    critical_disks.append({
+                                        "mount": mount_point,
+                                        "usage": disk_usage,
+                                        "filesystem": filesystem
+                                    })
+                                    print(f"  {mount_point}: {Colors.red(f'{disk_usage:.1f}% (ALERT - above threshold)')}")
+                                else:
+                                    print(f"  {mount_point}: {Colors.green(f'{disk_usage:.1f}%')}")
+                                    self.alert_manager.check_alert_resolution(
+                                        nickname, hostname, f"Disk ({mount_point})",
+                                        disk_usage, self.disk_threshold)
+                            except ValueError:
+                                print(f"  {mount_point}: {Colors.yellow('Unable to parse usage')}")
                 
                 # Send alerts for critical disks
                 for disk in critical_disks:
