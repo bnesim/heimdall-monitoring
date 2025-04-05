@@ -71,6 +71,9 @@ CPU_THRESHOLD = config['thresholds']['cpu'] if config else 80  # 80%
 MEM_THRESHOLD = config['thresholds']['memory'] if config else 80  # 80%
 DISK_THRESHOLD = config['thresholds']['disk'] if config else 85  # 85%
 
+# Alert cooldown period (in hours)
+ALERT_COOLDOWN = config.get('alert_cooldown', 1) if config else 1  # Default: 1 hour
+
 # Setup logging
 logging.basicConfig(
     level=logging.INFO,
