@@ -137,7 +137,7 @@ Heimdall maintains logs in the `logs` directory:
 
 <p align="center">
   <a href="https://www.bnesim.com">
-    <img src="https://www.bnesim.com/wp-content/uploads/2023/06/bnesim-logo-1.png" alt="BNESIM Logo" width="200">
+    <img src="https://www.bnesim.com/wp-content/uploads/2025/02/BNESIMLOGO.svg" alt="BNESIM Logo" width="200">
   </a>
 </p>
 
