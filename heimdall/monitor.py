@@ -274,7 +274,7 @@ class ServerMonitor:
             # Check Disk usage
             print(f"Disk Usage: ")
             stdin, stdout, stderr = client.exec_command(
-                "df -h | grep -v tmpfs | grep -v devtmpfs | grep -v Filesystem")
+                "df -h | grep -v tmpfs | grep -v devtmpfs |grep -v snapd | grep -v Filesystem")
             disk_output_all = stdout.read().decode('utf-8').strip().split('\n')
             
             if disk_output_all:
@@ -293,21 +293,17 @@ class ServerMonitor:
                         # Skip monitoring for special filesystems that are expected to be full
                         should_skip = False
                         
-                        # Skip snap package mount points (read-only squashfs filesystems)
-                        if '/snap/' in mount_point or mount_point.startswith('/snap/'):
-                            should_skip = True
-                            logger.debug(f"Skipping snap mount point: {mount_point}")
-                            print(f"  {mount_point}: {Colors.yellow(f'Skipped (snap package)')}")                            
-                        # Skip other special filesystems that are typically at high usage
-                        elif any(special in mount_point for special in ['/var/lib/snapd/', '/boot/efi']):
-                            should_skip = True
-                            logger.debug(f"Skipping special filesystem: {mount_point}")
-                            print(f"  {mount_point}: {Colors.yellow(f'Skipped (special filesystem)')}")                            
                         # Skip if filesystem is squashfs (typically read-only and 100% full)
-                        elif 'squashfs' in filesystem.lower():
+                        if 'squashfs' in filesystem.lower():
                             should_skip = True
                             logger.debug(f"Skipping squashfs filesystem: {filesystem} at {mount_point}")
-                            print(f"  {mount_point}: {Colors.yellow(f'Skipped (squashfs)')}")                            
+                            print(f"  {mount_point}: {Colors.yellow(f'Skipped (squashfs)')}")
+                            
+                        # Skip if filesystem is a snap (typically read-only and 100% full)
+                        if '/snap/' in mount_point or mount_point.startswith('/snap'):
+                            should_skip = True
+                            logger.debug(f"Skipping snap filesystem: {filesystem} at {mount_point}")
+                            print(f"  {mount_point}: {Colors.yellow(f'Skipped (snap)')}")
                         
                         if not should_skip:
                             try:

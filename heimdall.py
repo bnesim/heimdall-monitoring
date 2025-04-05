@@ -85,81 +85,362 @@ logging.basicConfig(
 )
 logger = logging.getLogger("Heimdall")
 
-# ANSI Colors for terminal output
-class Colors:
-    RED = '\033[91m'
-    GREEN = '\033[92m'
-    YELLOW = '\033[93m'
-    BLUE = '\033[94m'
-    END = '\033[0m'
-    BOLD = '\033[1m'
+# Use the Colors class from heimdall.utils instead of defining it here
 
 
-class ServerMonitor:
-    def __init__(self):
-        self.servers = []
+# Use the ServerMonitor class from heimdall.monitor instead of defining it here
+
+def interactive_menu(monitor):
+    """Display interactive menu"""
+    server_config = monitor.server_config
+    
+    while True:
+        print(f"\n{Colors.green(Colors.bold('Heimdall Server Monitoring'))}")
+        print("="*30)
+        print("1. Add a new server")
+        print("2. Remove a server")
+        print("3. Edit a server (add/remove services)")
+        print("4. List all servers")
+        print("5. Check all servers")
+        print("6. Configure SMTP settings")
+        print("7. Exit")
+        
+        option = input("\nSelect an option: ").strip()
+        
+        if option == '1':
+            add_server(monitor)
+        elif option == '2':
+            remove_server(server_config)
+        elif option == '3':
+            edit_server(monitor)
+        elif option == '4':
+            list_servers(server_config)
+        elif option == '5':
+            monitor.check_all_servers()
+        elif option == '6':
+            configure_smtp()
+        elif option == '7':
+            print(f"\n{Colors.green('Heimdall will continue watching your realms from Asgard. Farewell!')}")
+            logger.info("Exiting Heimdall")
+            break
+        else:
+            print(f"\n{Colors.red('Invalid option, please try again.')}")
+
+
+def add_server(monitor):
+    """Add a new server interactively"""
+    print(f"\n{Colors.green(Colors.bold('Add New Server'))}")
+    print("="*20)
+    
+    hostname = input("Server Hostname/IP: ").strip()
+    if not hostname:
+        print(f"{Colors.red('Error: Hostname cannot be empty')}")
+        return
+        
+    port_input = input("SSH Port (default: 22): ").strip()
+    port = 22 if not port_input else int(port_input)
+    
+    username = input("Username (default: root): ").strip() or "root"
+    
+    # Ask for authentication method
+    print(f"\n{Colors.blue('Authentication Method:')}")
+    print("1. SSH Key (recommended)")
+    print("2. Password")
+    auth_method = input("Select authentication method [1]: ").strip() or "1"
+    
+    password = None
+    key_path = None
+    
+    if auth_method == "1":
+        key_path = input("SSH Key Path (default: ~/.ssh/id_rsa): ").strip() or os.path.expanduser("~/.ssh/id_rsa")
+        if not os.path.exists(key_path):
+            print(f"{Colors.yellow('Warning: SSH key file not found: ' + key_path)}")
+            use_password = input("Would you like to use password authentication instead? (y/n): ").strip().lower()
+            if use_password == 'y':
+                password = input("Password: ").strip()
+            else:
+                print(f"{Colors.red('Cannot proceed without valid authentication.')}")
+                return
+    else:
+        password = input("Password: ").strip()
+    
+    # Test connection
+    if not monitor.test_ssh_connection(hostname, port, username, password, key_path):
+        print(f"\n{Colors.red('Server not added.')}")
+        return
+    
+    # Get the real hostname for nickname
+    try:
+        client = paramiko.SSHClient()
+        client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+        
+        # Connection parameters
+        connect_params = {
+            'hostname': hostname,
+            'port': port,
+            'username': username,
+            'timeout': 5
+        }
+        
+        # Try SSH key authentication if key_path is provided
+        if key_path and os.path.exists(key_path):
+            connect_params['key_filename'] = key_path
+        elif password:
+            connect_params['password'] = password
+        
+        client.connect(**connect_params)
+        
+        # Get the real hostname
+        stdin, stdout, stderr = client.exec_command("hostname")
+        real_hostname = stdout.read().decode('utf-8').strip()
+        
+        # If we got a hostname, use it as the nickname
+        if real_hostname:
+            nickname = real_hostname
+            print(f"\nDetected server hostname: {Colors.green(nickname)}")
+        else:
+            # Fall back to using the IP/hostname as the nickname
+            nickname = hostname
+            print(f"\nCouldn't detect hostname, using: {Colors.yellow(nickname)}")
+        
+        # Let user select services to monitor
+        monitored_services = monitor.select_services_to_monitor(hostname, port, username, password, key_path)
+        
+        # Create server data
+        server_data = {
+            'hostname': hostname,
+            'port': port,
+            'username': username,
+            'nickname': nickname,
+            'monitored_services': monitored_services
+        }
+        
+        # Add authentication details
+        if key_path and os.path.exists(key_path):
+            server_data['key_path'] = key_path
+        if password:
+            server_data['password'] = password
+        
+        # Add the server to configuration
+        monitor.server_config.add_server(server_data)
+        
+        if monitored_services:
+            print(f"\n{Colors.green('Server ' + nickname + ' added successfully with ' + str(len(monitored_services)) + ' monitored services!')}")
+        else:
+            print(f"\n{Colors.green('Server ' + nickname + ' added successfully!')}")
+        
+        return True
+    except Exception as e:
+        logger.error(f"Error adding server {hostname}: {str(e)}")
+        print(f"\n{Colors.red('Error: ' + str(e))}")
+        print(f"\n{Colors.red('Server not added.')}")
+        return False
+
+
+def remove_server(server_config):
+    """Remove a server interactively"""
+    servers = server_config.get_servers()
+    if not servers:
+        print(f"\n{Colors.yellow('No servers configured yet.')}")
+        return
+        
+    print(f"\n{Colors.yellow(Colors.bold('Remove Server'))}")
+    print("="*20)
+    
+    list_servers(server_config)
+    
+    selection = input("\nEnter the number of the server to remove: ").strip()
+    
+    # Find the server by number
+    try:
+        index = int(selection) - 1  # Convert to 0-based index
+        if 0 <= index < len(servers):
+            server = servers[index]
+            nickname = server['nickname']  # Get the nickname for later use
+            
+            # Remove the server
+            if server_config.remove_server(nickname):
+                print(f"\n{Colors.green('Server ' + nickname + ' removed successfully!')}")
+            else:
+                print(f"\n{Colors.red('Failed to remove server ' + nickname)}")
+        else:
+            logger.warning(f"Server index out of range: {selection}")
+            print(f"\n{Colors.red('Invalid server number. Please enter a number between 1 and ' + str(len(servers)) + '.')}")
+    except ValueError:
+        logger.warning(f"Invalid server selection: {selection}")
+        print(f"\n{Colors.red('Please enter a valid server number.')}")
+
+
+def list_servers(server_config):
+    """List all configured servers"""
+    servers = server_config.get_servers()
+    if not servers:
+        print(f"\n{Colors.yellow('No servers configured yet.')}")
+        return
+        
+    print(f"\n{Colors.green(Colors.bold('Server List'))}")
+    print("="*20)
+    
+    for i, server in enumerate(servers):
+        print(f"  {i+1}. {Colors.bold(server['nickname'])} - {server['hostname']}:{server['port']} ({server['username']})")
+
+
+def edit_server(monitor):
+    """Edit a server to add/remove monitored services"""
+    server_config = monitor.server_config
+    servers = server_config.get_servers()
+    
+    if not servers:
+        print(f"\n{Colors.yellow('No servers configured yet.')}")
+        return
+        
+    print(f"\n{Colors.blue(Colors.bold('Edit Server'))}")
+    print("="*20)
+    
+    list_servers(server_config)
+    
+    selection = input("\nEnter the number of the server to edit: ").strip()
+    
+    # Find the server by number
+    try:
+        index = int(selection) - 1  # Convert to 0-based index
+        if 0 <= index < len(servers):
+            server = servers[index]
+            nickname = server['nickname']  # Get the nickname for later use
+        else:
+            logger.warning(f"Server index out of range: {selection}")
+            print(f"\n{Colors.red('Invalid server number. Please enter a number between 1 and ' + str(len(servers)) + '.')}")
+            return
+    except ValueError:
+        logger.warning(f"Invalid server selection: {selection}")
+        print(f"\n{Colors.red('Please enter a valid server number.')}")
+        return
+    
+    # Connect to the server
+    hostname = server['hostname']
+    port = server['port']
+    username = server['username']
+    password = server.get('password')
+    key_path = server.get('key_path')
+    
+    print(f"\nConnecting to {hostname}:{port} with user {username}...")
+    
+    try:
+        # Get running services
+        print(f"\n{Colors.blue('Getting running services...')}")
+        services = monitor.select_services_to_monitor(hostname, port, username, password, key_path)
+        
+        if services:
+            # Update the server's monitored services
+            if monitor.server_config.update_server_services(nickname, services):
+                print(f"\n{Colors.green('Server ' + nickname + ' updated successfully with ' + str(len(services)) + ' monitored services!')}")
+            else:
+                print(f"\n{Colors.red('Failed to update server ' + nickname)}")
+        else:
+            print(f"\n{Colors.yellow('No services selected. Server not updated.')}")
+            
+    except Exception as e:
+        logger.error(f"Error editing server {nickname}: {str(e)}")
+        print(f"\n{Colors.red('Failed to connect to server: ' + str(e))}")
+        print(f"\n{Colors.red('Server not updated.')}")
         self.load_servers()
 
-    def load_servers(self):
-        """Load servers from the JSON file"""
-        if os.path.exists(SERVERS_FILE):
+# The ServerMonitor class from heimdall.monitor is used instead
+
+# The ServerMonitor class has been completely removed
+# We now use the ServerMonitor class from heimdall.monitor instead
+
+def configure_smtp():
+    """Configure SMTP settings for email alerts"""
+    print(f"\n{Colors.green(Colors.bold('Configure SMTP Settings'))}")
+    print("="*20)
+    
+    # Load current config
+    current_config = load_config()
+    
+    # Display current settings
+    print("\nCurrent SMTP Settings:")
+    if current_config and 'email' in current_config:
+        email_config = current_config['email']
+        print(f"  Enabled: {Colors.green('Yes') if email_config.get('enabled') else Colors.red('No')}")
+        print(f"  SMTP Server: {email_config.get('smtp_server', 'Not set')}")
+        print(f"  SMTP Port: {email_config.get('smtp_port', 'Not set')}")
+        print(f"  Use TLS: {Colors.green('Yes') if email_config.get('use_tls') else Colors.red('No')}")
+        print(f"  Username: {email_config.get('username', 'Not set')}")
+        print(f"  Sender: {email_config.get('sender', 'Not set')}")
+        recipients = email_config.get('recipients', [])
+        print(f"  Recipients: {', '.join(recipients) if recipients else 'None'}")
+    else:
+        print(f"  {Colors.yellow('No SMTP settings found')}")
+    
+    # Ask if user wants to update settings
+    update = input("\nDo you want to update SMTP settings? (y/n): ").strip().lower()
+    if update != 'y':
+        return
+    
+    # Update settings
+    if not current_config:
+        current_config = {}
+    if 'email' not in current_config:
+        current_config['email'] = {}
+    
+    email_config = current_config['email']
+    
+    # Enable/disable email alerts
+    enable = input("Enable email alerts? (y/n): ").strip().lower()
+    email_config['enabled'] = (enable == 'y')
+    
+    if enable == 'y':
+        # SMTP server
+        email_config['smtp_server'] = input(f"SMTP Server [{email_config.get('smtp_server', 'smtp.example.com')}]: ").strip() or email_config.get('smtp_server', 'smtp.example.com')
+        
+        # SMTP port
+        port_input = input(f"SMTP Port [{email_config.get('smtp_port', 587)}]: ").strip()
+        email_config['smtp_port'] = int(port_input) if port_input else email_config.get('smtp_port', 587)
+        
+        # Use TLS
+        use_tls = input(f"Use TLS? (y/n) [{email_config.get('use_tls', True) and 'y' or 'n'}]: ").strip().lower()
+        email_config['use_tls'] = (use_tls == 'y' or (not use_tls and email_config.get('use_tls', True)))
+        
+        # Username
+        email_config['username'] = input(f"SMTP Username [{email_config.get('username', 'user@example.com')}]: ").strip() or email_config.get('username', 'user@example.com')
+        
+        # Password
+        password = input("SMTP Password (leave empty to keep current): ").strip()
+        if password:
+            email_config['password'] = password
+        
+        # Sender
+        email_config['sender'] = input(f"Sender Email [{email_config.get('sender', 'heimdall@example.com')}]: ").strip() or email_config.get('sender', 'heimdall@example.com')
+        
+        # Recipients
+        current_recipients = ', '.join(email_config.get('recipients', ['admin@example.com']))
+        recipients_input = input(f"Recipients (comma separated) [{current_recipients}]: ").strip()
+        if recipients_input:
+            email_config['recipients'] = [r.strip() for r in recipients_input.split(',')]
+    
+    # Save config
+    with open(CONFIG_FILE, 'w') as f:
+        json.dump(current_config, f, indent=2)
+    
+    print(f"\n{Colors.green('SMTP settings updated successfully!')}")
+    
+    # Test email if enabled
+    if email_config['enabled']:
+        test = input("\nDo you want to send a test email? (y/n): ").strip().lower()
+        if test == 'y':
             try:
-                with open(SERVERS_FILE, 'r') as f:
-                    data = json.load(f)
-                    self.servers = data.get('servers', [])
-                logger.info(f"Loaded {len(self.servers)} servers from configuration")
-            except json.JSONDecodeError:
-                logger.error(f"Invalid JSON in {SERVERS_FILE}")
-                print(f"{Colors.RED}Error: Invalid JSON in {SERVERS_FILE}{Colors.END}")
-                self.servers = []
-        else:
-            # Create an empty servers file
-            logger.info(f"Creating new servers file: {SERVERS_FILE}")
-            self.save_servers()
-
-    def save_servers(self):
-        """Save servers to the JSON file"""
-        data = {'servers': self.servers}
-        with open(SERVERS_FILE, 'w') as f:
-            json.dump(data, f, indent=2)
-        logger.info(f"Saved {len(self.servers)} servers to configuration")
-
-    def add_server(self):
-        """Add a new server interactively"""
-        print(f"\n{Colors.GREEN}{Colors.BOLD}Add New Server{Colors.END}")
-        print("="*20)
-        
-        hostname = input("Server Hostname/IP: ").strip()
-        if not hostname:
-            print(f"{Colors.RED}Error: Hostname cannot be empty{Colors.END}")
-            return
-            
-        port_input = input("SSH Port (default: 22): ").strip()
-        port = 22 if not port_input else int(port_input)
-        
-        username = input("Username (default: root): ").strip() or "root"
-        
-        # Ask for authentication method
-        print(f"\n{Colors.BLUE}Authentication Method:{Colors.END}")
-        print("1. SSH Key (recommended)")
-        print("2. Password")
-        auth_method = input("Select authentication method [1]: ").strip() or "1"
-        
-        password = None
-        key_path = None
-        
-        if auth_method == "1":
-            key_path = input("SSH Key Path (default: ~/.ssh/id_rsa): ").strip() or os.path.expanduser("~/.ssh/id_rsa")
-            if not os.path.exists(key_path):
-                print(f"{Colors.YELLOW}Warning: SSH key file not found: {key_path}{Colors.END}")
-                use_password = input("Would you like to use password authentication instead? (y/n): ").strip().lower()
-                if use_password == 'y':
-                    password = input("Password: ").strip()
+                # Create alert manager
+                alert_manager = AlertManager(current_config)
+                
+                # Send test email
+                if alert_manager.send_test_email():
+                    print(f"\n{Colors.green('Test email sent successfully!')}")
                 else:
-                    print(f"{Colors.RED}Cannot proceed without valid authentication.{Colors.END}")
-                    return
-        else:
-            password = input("Password: ").strip()
+                    print(f"\n{Colors.red('Failed to send test email.')}")
+            except Exception as e:
+                logger.error(f"Error sending test email: {str(e)}")
+                print(f"\n{Colors.red('Error sending test email: ' + str(e))}")
         
         # Connect and get the real hostname
         try:
@@ -261,40 +542,7 @@ class ServerMonitor:
             print(f"\n{Colors.RED}Server not added.{Colors.END}")
             return False
 
-    def remove_server(self):
-        """Remove a server interactively"""
-        if not self.servers:
-            print(f"\n{Colors.YELLOW}No servers configured yet.{Colors.END}")
-            return
-            
-        print(f"\n{Colors.YELLOW}{Colors.BOLD}Remove Server{Colors.END}")
-        print("="*20)
-        
-        self.list_servers()
-        
-        selection = input("\nEnter the number of the server to remove: ").strip()
-        
-        # Find the server by number
-        try:
-            index = int(selection) - 1  # Convert to 0-based index
-            if 0 <= index < len(self.servers):
-                server = self.servers[index]
-                nickname = server['nickname']  # Get the nickname for later use
-                
-                # Remove the server
-                del self.servers[index]
-                self.save_servers()
-                logger.info(f"Removed server: {nickname}")
-                print(f"\n{Colors.GREEN}Server '{nickname}' removed successfully!{Colors.END}")
-                return
-            else:
-                logger.warning(f"Server index out of range: {selection}")
-                print(f"\n{Colors.RED}Invalid server number. Please enter a number between 1 and {len(self.servers)}.{Colors.END}")
-                return
-        except ValueError:
-            logger.warning(f"Invalid server selection: {selection}")
-            print(f"\n{Colors.RED}Please enter a valid server number.{Colors.END}")
-            return
+
 
     def list_servers(self):
         """List all configured servers"""
@@ -466,7 +714,7 @@ class ServerMonitor:
                 
             # Check Disk usage for all mounted filesystems
             print(f"Disk Usage: ")
-            stdin, stdout, stderr = client.exec_command("df -h | grep -v tmpfs | grep -v devtmpfs | grep -v Filesystem")
+            stdin, stdout, stderr = client.exec_command("df -h | grep -v tmpfs |grep -v snapd | grep -v devtmpfs | grep -v Filesystem")
             disk_output_all = stdout.read().decode('utf-8').strip().split('\n')
             
             # Check if we got any output
@@ -1286,11 +1534,17 @@ def main():
         configure_smtp()
         return
     
-    monitor = ServerMonitor()
+    # Load configuration
+    config = load_config()
+    server_config = ServerConfig()
+    
+    # Create a monitor instance from the heimdall.monitor module
+    monitor = ServerMonitor(config, server_config)
     
     if args.interactive:
         logger.info("Starting in interactive mode")
-        monitor.interactive_menu()
+        # Use the local interactive_menu function with the monitor
+        interactive_menu(monitor)
     elif args.check:
         logger.info("Starting in check mode")
         monitor.check_all_servers()

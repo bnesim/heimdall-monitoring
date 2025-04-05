@@ -150,14 +150,33 @@ class AlertManager:
             # Create HTML version of the message with logo from GitHub URL
             html = f"""
             <html>
+              <head>
+                <style>
+                  body {{ font-family: Arial, sans-serif; line-height: 1.6; color: #333; }}
+                  .container {{ max-width: 600px; margin: 0 auto; padding: 20px; }}
+                  .header {{ text-align: center; margin-bottom: 20px; }}
+                  .logo {{ max-width: 200px; }}
+                  h2 {{ color: #cc3300; }}
+                  .alert-info {{ background-color: #f8f8f8; padding: 15px; border-left: 4px solid #cc3300; }}
+                  .footer {{ margin-top: 30px; font-size: 12px; color: #777; text-align: center; }}
+                </style>
+              </head>
               <body>
-                <div style="text-align: center; margin-bottom: 20px;">
-                  <img src="https://raw.githubusercontent.com/bnesim/heimdall-monitoring/refs/heads/main/HEIMDALL.png" alt="Heimdall Logo" style="max-width: 200px;">
+                <div class="container">
+                  <div class="header">
+                    <img src="https://raw.githubusercontent.com/bnesim/heimdall-monitoring/refs/heads/main/HEIMDALL.png" alt="Heimdall Logo" class="logo">
+                  </div>
+                  <h2>Heimdall Alert</h2>
+                  <div class="alert-info">
+                    <p><strong>Server:</strong> {nickname} ({hostname})</p>
+                    <p><strong>Alert:</strong> {message}</p>
+                    <p><strong>Time:</strong> {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}</p>
+                    <p>Please investigate this issue as soon as possible.</p>
+                  </div>
+                  <div class="footer">
+                    <p>This is an automated message from Heimdall Monitoring System.</p>
+                  </div>
                 </div>
-                <h2>Heimdall Alert</h2>
-                <p><strong>Server:</strong> {nickname} ({hostname})</p>
-                <p><strong>Alert:</strong> {message}</p>
-                <p><strong>Time:</strong> {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}</p>
               </body>
             </html>
             """
@@ -188,14 +207,37 @@ class AlertManager:
             # Create HTML version of the message with logo from GitHub URL
             html = f"""
             <html>
+              <head>
+                <style>
+                  body {{ font-family: Arial, sans-serif; line-height: 1.6; color: #333; }}
+                  .container {{ max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #ddd; border-radius: 5px; }}
+                  .header {{ text-align: center; margin-bottom: 20px; }}
+                  .logo {{ max-width: 200px; }}
+                  h2 {{ color: #2c7a2c; font-size: 24px; margin-bottom: 20px; text-align: center; }}
+                  .alert-info {{ background-color: #f8f8f8; padding: 15px; border-left: 4px solid #2c7a2c; margin-bottom: 20px; }}
+                  .server-info {{ font-weight: bold; margin-bottom: 10px; }}
+                  .resolution-message {{ color: #2c7a2c; font-weight: bold; }}
+                  .footer {{ margin-top: 30px; font-size: 12px; color: #777; text-align: center; border-top: 1px solid #eee; padding-top: 15px; }}
+                </style>
+              </head>
               <body>
-                <div style="text-align: center; margin-bottom: 20px;">
-                  <img src="https://raw.githubusercontent.com/bnesim/heimdall-monitoring/refs/heads/main/HEIMDALL.png" alt="Heimdall Logo" style="max-width: 200px;">
+                <div class="container">
+                  <div class="header">
+                    <img src="https://raw.githubusercontent.com/bnesim/heimdall-monitoring/refs/heads/main/HEIMDALL.png" alt="Heimdall Logo" class="logo">
+                  </div>
+                  <h2>Heimdall Alert Resolution</h2>
+                  <div class="alert-info">
+                    <div class="server-info">
+                      <p><strong>Server:</strong> {nickname} ({hostname})</p>
+                    </div>
+                    <p class="resolution-message"><strong>Resolved Issue:</strong> {metric} is now at {current_value:.1f}%</p>
+                    <p><strong>Time:</strong> {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}</p>
+                    <p>The previously reported issue has been resolved. No further action is required.</p>
+                  </div>
+                  <div class="footer">
+                    <p>This is an automated message from Heimdall Monitoring System.</p>
+                  </div>
                 </div>
-                <h2>Heimdall Alert Resolution</h2>
-                <p><strong>Server:</strong> {nickname} ({hostname})</p>
-                <p><strong>Resolved:</strong> {metric} is now at {current_value:.1f}%</p>
-                <p><strong>Time:</strong> {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}</p>
               </body>
             </html>
             """
