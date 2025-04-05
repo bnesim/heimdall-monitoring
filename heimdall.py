@@ -748,7 +748,7 @@ class ServerMonitor:
                 <body>
                     <div class="container">
                         <div class="logo">
-                            <img src="cid:heimdall_logo" alt="Heimdall Logo">
+                            <img src="https://raw.githubusercontent.com/bnesim/heimdall-monitoring/refs/heads/main/HEIMDALL.png" alt="Heimdall Logo">
                         </div>
                         <h1>⚠️ Heimdall Server Alert ⚠️</h1>
                         <p>Heimdall has detected an issue that requires your attention.</p>
@@ -938,7 +938,7 @@ class ServerMonitor:
             <body>
                 <div class="container">
                     <div class="logo">
-                        <img src="cid:heimdall_logo" alt="Heimdall Logo">
+                        <img src="https://raw.githubusercontent.com/bnesim/heimdall-monitoring/refs/heads/main/HEIMDALL.png" alt="Heimdall Logo">
                     </div>
                     <h1>✅ Alert Resolved</h1>
                     <p>Heimdall has detected that a previous alert has been resolved.</p>

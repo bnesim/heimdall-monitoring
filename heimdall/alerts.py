@@ -144,12 +144,12 @@ class AlertManager:
             subject_prefix = "NEW ALERT" if is_new_alert else "RECURRING ALERT"
             msg['Subject'] = f"HEIMDALL {subject_prefix}: {nickname} - {message}"
             
-            # Create HTML version of the message with logo
+            # Create HTML version of the message with logo from GitHub URL
             html = f"""
             <html>
               <body>
                 <div style="text-align: center; margin-bottom: 20px;">
-                  <img src="https://my.bnesim.com/assets/img/HEIMDALL.png" alt="Heimdall Logo" style="max-width: 200px;">
+                  <img src="https://raw.githubusercontent.com/bnesim/heimdall-monitoring/refs/heads/main/HEIMDALL.png" alt="Heimdall Logo" style="max-width: 200px;">
                 </div>
                 <h2>Heimdall Alert</h2>
                 <p><strong>Server:</strong> {nickname} ({hostname})</p>
@@ -182,11 +182,12 @@ class AlertManager:
             msg['To'] = ", ".join(self.config['email']['recipients'])
             msg['Subject'] = f"HEIMDALL RESOLVED: {nickname} - {metric}"
             
+            # Create HTML version of the message with logo from GitHub URL
             html = f"""
             <html>
               <body>
                 <div style="text-align: center; margin-bottom: 20px;">
-                  <img src="https://my.bnesim.com/assets/img/HEIMDALL.png" alt="Heimdall Logo" style="max-width: 200px;">
+                  <img src="https://raw.githubusercontent.com/bnesim/heimdall-monitoring/refs/heads/main/HEIMDALL.png" alt="Heimdall Logo" style="max-width: 200px;">
                 </div>
                 <h2>Heimdall Alert Resolution</h2>
                 <p><strong>Server:</strong> {nickname} ({hostname})</p>
