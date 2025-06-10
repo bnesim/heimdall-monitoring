@@ -102,8 +102,13 @@ Keep your response concise and actionable, focusing on the most important findin
         except requests.exceptions.Timeout:
             logger.error("OpenRouter API request timed out")
             return None
+        except requests.exceptions.HTTPError as e:
+            logger.error(f"OpenRouter HTTP error: {e.response.status_code} - {e.response.text}")
+            return None
         except Exception as e:
-            logger.error(f"Error getting AI suggestion: {str(e)}")
+            logger.error(f"Error getting AI suggestion: {type(e).__name__}: {str(e)}")
+            # Log the prompt size to debug
+            logger.debug(f"Prompt length: {len(prompt)}, du_output length: {len(du_output)}")
             return None
     
     def format_suggestion_for_alert(self, suggestion: str) -> str:

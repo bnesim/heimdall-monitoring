@@ -363,13 +363,19 @@ class ServerMonitor:
                                 print(f"    Using quick analysis mode...")
                                 # Just get the largest subdirectories without recursion
                                 if disk['mount'] == '/':
-                                    du_command = "ls -la / | grep '^d' | awk '{print $9}' | grep -v '^\\.\\.$' | xargs -I {} du -sh /{} 2>/dev/null | sort -rh | head -10"
+                                    # Simpler command that's more likely to work
+                                    du_command = "cd / && du -sh * 2>/dev/null | sort -rh | head -10"
                                 else:
-                                    du_command = f"ls -la {disk['mount']} | grep '^d' | awk '{{print $9}}' | grep -v '^\\.\\.$$' | xargs -I {{}} du -sh {disk['mount']}/{{}} 2>/dev/null | sort -rh | head -10"
-                                stdin, stdout, stderr = client.exec_command(du_command, timeout=10)
-                                du_output = stdout.read().decode('utf-8', errors='replace').strip()
+                                    du_command = f"cd {disk['mount']} && du -sh * 2>/dev/null | sort -rh | head -10"
+                                try:
+                                    stdin, stdout, stderr = client.exec_command(du_command, timeout=10)
+                                    du_output = stdout.read().decode('utf-8', errors='replace').strip()
+                                except Exception as e2:
+                                    logger.warning(f"Quick analysis also failed: {str(e2)}")
+                                    du_output = "Unable to analyze disk usage"
                             
                             # Get AI analysis
+                            logger.info(f"Calling AI analysis for {nickname} {disk['mount']} - du_output length: {len(du_output)}, df_output length: {len(df_output)}")
                             ai_suggestion = self.ai_assistant.analyze_disk_usage(
                                 nickname, disk['filesystem'], disk['usage'], 
                                 du_output, df_output
@@ -384,8 +390,9 @@ class ServerMonitor:
                                 print(f"  {Colors.yellow('AI analysis not available')}")
                                 
                         except Exception as e:
-                            logger.error(f"Error getting AI suggestion: {str(e)}")
-                            print(f"  {Colors.yellow('AI analysis failed')}")
+                            import traceback
+                            logger.error(f"Error getting AI suggestion: {str(e)}\n{traceback.format_exc()}")
+                            print(f"  {Colors.yellow('AI analysis failed: ' + str(e))}")
                     
                     logger.warning(f"{nickname} ({hostname}): {alert_msg}")
                     self.alert_manager.send_alert(nickname, hostname, alert_msg,
