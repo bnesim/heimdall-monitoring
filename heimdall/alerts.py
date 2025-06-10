@@ -15,6 +15,7 @@ from datetime import datetime
 from email.mime.text import MIMEText
 from email.mime.image import MIMEImage
 from email.mime.multipart import MIMEMultipart
+from .telegram import TelegramBot
 
 # Alert status file
 ALERT_STATUS_FILE = "alert_status.json"
@@ -25,6 +26,9 @@ class AlertManager:
     def __init__(self, config):
         self.config = config
         self.alert_status = self.load_alert_status()
+        self.telegram_bot = TelegramBot(config)
+        if self.telegram_bot.is_configured():
+            self.telegram_bot.start_polling()
     
     def load_alert_status(self):
         """Load the alert status from file."""
@@ -115,17 +119,26 @@ class AlertManager:
         # Get alert_cooldown for email (in case it wasn't set above)
         alert_cooldown = self.config.get('alert_cooldown', 1)  # Default to 1 hour if not configured
         
-        # Send email if enabled and needed
-        if self.config and self.config.get('email', {}).get('enabled', False) and should_send_email:
-            self._send_email_alert(nickname, hostname, message, is_new_alert, alert_cooldown)
-            return True
-        else:
-            if not should_send_email and alert_id in self.alert_status["active_alerts"]:
-                logger.info(f"Alert {alert_id} logged but email suppressed (rate limited)")
-                return False
-            else:
-                logger.info(f"Alert {alert_id} logged (email alerts disabled)")
-                return False
+        # Send notifications if needed
+        email_sent = False
+        telegram_sent = False
+        
+        if should_send_email:
+            # Send email if enabled
+            if self.config and self.config.get('email', {}).get('enabled', False):
+                email_sent = self._send_email_alert(nickname, hostname, message, is_new_alert, alert_cooldown)
+            
+            # Send Telegram if enabled
+            if self.telegram_bot.is_configured():
+                telegram_sent = self.telegram_bot.send_alert_to_all(nickname, hostname, message, is_new_alert)
+        
+        # Log the outcome
+        if not should_send_email and alert_id in self.alert_status["active_alerts"]:
+            logger.info(f"Alert {alert_id} logged but notifications suppressed (rate limited)")
+        elif not email_sent and not telegram_sent:
+            logger.info(f"Alert {alert_id} logged (no notifications sent)")
+        
+        return email_sent or telegram_sent
     
     def check_alert_resolution(self, nickname, hostname, metric, current_value, threshold):
         """Check if an alert has been resolved."""
@@ -144,10 +157,25 @@ class AlertManager:
                 # Log resolution
                 logger.info(f"{nickname} ({hostname}): {metric} alert resolved - now at {current_value:.1f}%, below threshold of {threshold}%")
                 
-                # Send resolution notification
+                # Calculate duration for Telegram
+                first_detected = datetime.strptime(alert["first_detected"], "%Y-%m-%d %H:%M:%S")
+                resolved_time = datetime.strptime(alert["resolved_time"], "%Y-%m-%d %H:%M:%S")
+                duration = resolved_time - first_detected
+                hours, remainder = divmod(duration.seconds, 3600)
+                minutes, seconds = divmod(remainder, 60)
+                duration_str = f"{duration.days} days, {hours} hours, {minutes} minutes" if duration.days > 0 else f"{hours} hours, {minutes} minutes"
+                
+                # Send resolution notifications
+                email_sent = False
+                telegram_sent = False
+                
                 if self.config and self.config.get('email', {}).get('enabled', False):
-                    self._send_resolution_email(nickname, hostname, metric, current_value, threshold, alert)
-                    return True
+                    email_sent = self._send_resolution_email(nickname, hostname, metric, current_value, threshold, alert)
+                
+                if self.telegram_bot.is_configured():
+                    telegram_sent = self.telegram_bot.send_resolution_to_all(nickname, hostname, metric, current_value, threshold, duration_str)
+                
+                return email_sent or telegram_sent
         return False
     
     def _send_email_alert(self, nickname, hostname, message, is_new_alert, alert_cooldown):
@@ -358,3 +386,26 @@ class AlertManager:
         except Exception as e:
             logger.error(f"Failed to send test email: {str(e)}")
             return False
+    
+    def send_test_telegram(self):
+        """Send a test message to all Telegram subscribers."""
+        if not self.telegram_bot.is_configured():
+            logger.error("Telegram bot is not configured")
+            return False
+        
+        test_message = f"""<b>🧪 TEST MESSAGE</b>
+
+This is a test message from Heimdall Monitoring System.
+
+<b>Time:</b> {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
+<b>Subscribers:</b> {len(self.telegram_bot.subscribers)}
+
+If you're receiving this, your Telegram configuration is working correctly!"""
+        
+        sent_count = 0
+        for subscriber in self.telegram_bot.subscribers:
+            if self.telegram_bot.send_message(subscriber['chat_id'], test_message):
+                sent_count += 1
+        
+        logger.info(f"Test message sent to {sent_count}/{len(self.telegram_bot.subscribers)} Telegram subscribers")
+        return sent_count > 0

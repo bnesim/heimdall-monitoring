@@ -36,6 +36,11 @@ def load_config():
                     "sender": "heimdall@example.com",
                     "recipients": ["admin@example.com"]
                 },
+                "telegram": {
+                    "enabled": False,
+                    "bot_token": "",
+                    "subscribers": []
+                },
                 "thresholds": {
                     "cpu": 80,
                     "memory": 80,

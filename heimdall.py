@@ -14,6 +14,7 @@ It can be run in interactive mode to add/remove servers or in check mode to moni
 import os
 import sys
 import time
+import json
 import logging
 import argparse
 import paramiko
@@ -38,7 +39,8 @@ def interactive_menu(monitor):
         print("4. List all servers")
         print("5. Check all servers")
         print("6. Configure SMTP settings")
-        print("7. Exit")
+        print("7. Configure Telegram bot")
+        print("8. Exit")
         
         option = input("\nSelect an option: ").strip()
         
@@ -55,6 +57,8 @@ def interactive_menu(monitor):
         elif option == '6':
             configure_smtp()
         elif option == '7':
+            configure_telegram()
+        elif option == '8':
             print(f"\n{Colors.green('Heimdall will continue watching your realms from Asgard. Farewell!')}")
             logger.info("Exiting Heimdall")
             break
@@ -280,6 +284,105 @@ def edit_server(monitor):
         print(f"\n{Colors.red('Server not updated.')}")
 
 
+def configure_telegram():
+    """Configure Telegram bot settings interactively"""
+    print(f"\n{Colors.green(Colors.bold('Configure Telegram Bot'))}")
+    print("="*30)
+    
+    # Load current config
+    current_config = load_config()
+    if not current_config:
+        print(f"{Colors.red('Error loading configuration')}")
+        return
+    
+    # Get current Telegram settings
+    telegram_config = current_config.get('telegram', {})
+    
+    # Display current settings
+    if telegram_config:
+        print(f"\n{Colors.blue('Current Telegram settings:')}")
+        print(f"  Enabled: {Colors.green('Yes') if telegram_config.get('enabled') else Colors.red('No')}")
+        print(f"  Bot Token: {'*' * 10 + telegram_config.get('bot_token', '')[-4:] if telegram_config.get('bot_token') else 'Not set'}")
+        print(f"  Subscribers: {len(telegram_config.get('subscribers', []))}")
+    else:
+        print(f"  {Colors.yellow('No Telegram settings found')}")
+    
+    # Ask if user wants to update settings
+    update = input("\nDo you want to update Telegram settings? (y/n): ").strip().lower()
+    if update != 'y':
+        return
+    
+    # Update settings
+    if 'telegram' not in current_config:
+        current_config['telegram'] = {}
+    
+    telegram_config = current_config['telegram']
+    
+    # Enable/disable Telegram alerts
+    enable = input("Enable Telegram alerts? (y/n): ").strip().lower()
+    telegram_config['enabled'] = (enable == 'y')
+    
+    if enable == 'y':
+        # Bot token
+        print(f"\n{Colors.blue('To create a Telegram bot:')}")
+        print("1. Open Telegram and search for @BotFather")
+        print("2. Send /newbot and follow the instructions")
+        print("3. Copy the bot token provided by BotFather")
+        
+        token_input = input("\nBot Token (leave empty to keep current): ").strip()
+        if token_input:
+            telegram_config['bot_token'] = token_input
+        
+        # Keep existing subscribers
+        if 'subscribers' not in telegram_config:
+            telegram_config['subscribers'] = []
+    
+    # Save config
+    with open(CONFIG_FILE, 'w') as f:
+        json.dump(current_config, f, indent=2)
+    
+    print(f"\n{Colors.green('Telegram settings updated successfully!')}")
+    
+    # Test bot connection if enabled
+    if telegram_config['enabled'] and telegram_config.get('bot_token'):
+        test = input("\nDo you want to test the Telegram bot connection? (y/n): ").strip().lower()
+        if test == 'y':
+            try:
+                from heimdall.telegram import TelegramBot
+                bot = TelegramBot(current_config)
+                success, info = bot.test_connection()
+                
+                if success:
+                    print(f"\n{Colors.green('Bot connected successfully!')}")
+                    print(f"Bot name: @{info.get('username', 'Unknown')}")
+                    print(f"\n{Colors.blue('To subscribe to alerts:')}")
+                    print(f"1. Open Telegram and search for @{info.get('username', 'your_bot')}")
+                    print("2. Send /start to the bot")
+                    print("3. The bot will confirm your subscription")
+                else:
+                    print(f"\n{Colors.red('Failed to connect to bot: ' + str(info))}")
+            except Exception as e:
+                logger.error(f"Error testing Telegram bot: {str(e)}")
+                print(f"\n{Colors.red('Error testing bot: ' + str(e))}")
+    
+    # Send test message if there are subscribers
+    if telegram_config['enabled'] and telegram_config.get('bot_token') and telegram_config.get('subscribers'):
+        test_msg = input("\nDo you want to send a test message to all subscribers? (y/n): ").strip().lower()
+        if test_msg == 'y':
+            try:
+                # Create alert manager
+                alert_manager = AlertManager(current_config)
+                
+                # Send test message
+                if alert_manager.send_test_telegram():
+                    print(f"\n{Colors.green('Test message sent successfully!')}")
+                else:
+                    print(f"\n{Colors.red('Failed to send test message.')}")
+            except Exception as e:
+                logger.error(f"Error sending test message: {str(e)}")
+                print(f"\n{Colors.red('Error sending test message: ' + str(e))}")
+
+
 def configure_smtp():
     """Configure SMTP settings interactively"""
     print(f"\n{Colors.green(Colors.bold('SMTP Configuration'))}")
@@ -385,6 +488,9 @@ def main():
     group.add_argument('-i', '--interactive', action='store_true', help='Run in interactive mode')
     group.add_argument('-c', '--check', action='store_true', help='Check all servers (non-interactive)')
     group.add_argument('--configure-smtp', action='store_true', help='Configure SMTP settings interactively')
+    group.add_argument('--configure-telegram', action='store_true', help='Configure Telegram bot settings interactively')
+    group.add_argument('--test-email', action='store_true', help='Send a test email to verify SMTP settings')
+    group.add_argument('--test-telegram', action='store_true', help='Send a test Telegram message to all subscribers')
     
     args = parser.parse_args()
     
@@ -399,8 +505,38 @@ def main():
         configure_smtp()
         return
     
+    # Configure Telegram if requested
+    if args.configure_telegram:
+        configure_telegram()
+        return
+    
     # Load configuration
     config = load_config()
+    
+    # Test email if requested
+    if args.test_email:
+        if config and config.get('email', {}).get('enabled', False):
+            alert_manager = AlertManager(config)
+            if alert_manager.send_test_email():
+                print(f"{Colors.green('Test email sent successfully!')}")
+            else:
+                print(f"{Colors.red('Failed to send test email.')}")
+        else:
+            print(f"{Colors.red('Email alerts are not enabled. Use --configure-smtp to enable.')}")
+        return
+    
+    # Test Telegram if requested
+    if args.test_telegram:
+        if config and config.get('telegram', {}).get('enabled', False) and config.get('telegram', {}).get('bot_token'):
+            alert_manager = AlertManager(config)
+            if alert_manager.send_test_telegram():
+                print(f"{Colors.green('Test message sent successfully!')}")
+            else:
+                print(f"{Colors.red('Failed to send test message.')}")
+        else:
+            print(f"{Colors.red('Telegram alerts are not enabled. Use --configure-telegram to enable.')}")
+        return
+    
     server_config = ServerConfig()
     
     # Create a monitor instance from the heimdall.monitor module
