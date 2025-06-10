@@ -13,6 +13,7 @@ import paramiko
 import logging
 from .utils import Colors
 from .alerts import AlertManager
+from .ai_assistant import AIAssistant
 
 logger = logging.getLogger("Heimdall")
 
@@ -21,6 +22,7 @@ class ServerMonitor:
         self.config = config
         self.server_config = server_config
         self.alert_manager = AlertManager(config)
+        self.ai_assistant = AIAssistant(config)
         
         # Set thresholds
         self.cpu_threshold = config['thresholds']['cpu'] if config else 80
@@ -325,9 +327,66 @@ class ServerMonitor:
                             except ValueError:
                                 print(f"  {mount_point}: {Colors.yellow('Unable to parse usage')}")
                 
-                # Send alerts for critical disks
+                # Send alerts for critical disks with AI suggestions
                 for disk in critical_disks:
                     alert_msg = f"Disk usage for {disk['mount']} at {disk['usage']:.1f}%, threshold is {self.disk_threshold}%"
+                    
+                    # Get AI suggestion if OpenRouter is configured
+                    # Always try to get AI analysis for disk alerts (not just new ones)
+                    ai_suggestion = None
+                    if self.ai_assistant.is_configured():
+                        try:
+                            print(f"  Getting AI analysis for {disk['mount']}...")
+                            
+                            # Get df -h output for this specific filesystem
+                            stdin, stdout, stderr = client.exec_command(f"df -h {disk['mount']}")
+                            df_output = stdout.read().decode('utf-8', errors='replace').strip()
+                            
+                            # Get du -sh output for top directories
+                            # For root filesystem, use a more targeted approach to avoid long scans
+                            if disk['mount'] == '/':
+                                # Check specific directories that commonly grow large
+                                du_command = "du -sh /var /tmp /home /opt /usr /root 2>/dev/null | sort -rh"
+                            else:
+                                du_command = f"du -sh {disk['mount']}/* 2>/dev/null | sort -rh | head -20"
+                            
+                            print(f"    Running disk analysis...")
+                            try:
+                                stdin, stdout, stderr = client.exec_command(du_command, timeout=30)
+                                du_output = stdout.read().decode('utf-8', errors='replace').strip()
+                            except Exception as e:
+                                logger.warning(f"Disk analysis command timed out or failed: {str(e)}")
+                                du_output = ""
+                            
+                            # If du command failed or timed out, try a simpler command
+                            if not du_output or len(du_output) < 10:
+                                print(f"    Using quick analysis mode...")
+                                # Just get the largest subdirectories without recursion
+                                if disk['mount'] == '/':
+                                    du_command = "ls -la / | grep '^d' | awk '{print $9}' | grep -v '^\\.\\.$' | xargs -I {} du -sh /{} 2>/dev/null | sort -rh | head -10"
+                                else:
+                                    du_command = f"ls -la {disk['mount']} | grep '^d' | awk '{{print $9}}' | grep -v '^\\.\\.$$' | xargs -I {{}} du -sh {disk['mount']}/{{}} 2>/dev/null | sort -rh | head -10"
+                                stdin, stdout, stderr = client.exec_command(du_command, timeout=10)
+                                du_output = stdout.read().decode('utf-8', errors='replace').strip()
+                            
+                            # Get AI analysis
+                            ai_suggestion = self.ai_assistant.analyze_disk_usage(
+                                nickname, disk['filesystem'], disk['usage'], 
+                                du_output, df_output
+                            )
+                            
+                            if ai_suggestion:
+                                # Format and append AI suggestion to alert message
+                                formatted_suggestion = self.ai_assistant.format_suggestion_for_alert(ai_suggestion)
+                                alert_msg += formatted_suggestion
+                                print(f"  {Colors.green('AI analysis completed')}")
+                            else:
+                                print(f"  {Colors.yellow('AI analysis not available')}")
+                                
+                        except Exception as e:
+                            logger.error(f"Error getting AI suggestion: {str(e)}")
+                            print(f"  {Colors.yellow('AI analysis failed')}")
+                    
                     logger.warning(f"{nickname} ({hostname}): {alert_msg}")
                     self.alert_manager.send_alert(nickname, hostname, alert_msg,
                         alert_type=f"disk:{disk['mount']}")

@@ -41,6 +41,11 @@ def load_config():
                     "bot_token": "",
                     "subscribers": []
                 },
+                "openrouter": {
+                    "enabled": False,
+                    "api_key": "",
+                    "model": "deepseek/deepseek-r1-0528:free"
+                },
                 "thresholds": {
                     "cpu": 80,
                     "memory": 80,

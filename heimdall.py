@@ -40,8 +40,9 @@ def interactive_menu(monitor):
         print("5. Check all servers")
         print("6. Configure SMTP settings")
         print("7. Configure Telegram bot")
-        print("8. Run Telegram bot (for subscriptions)")
-        print("9. Exit")
+        print("8. Configure OpenRouter AI")
+        print("9. Run Telegram bot (for subscriptions)")
+        print("10. Exit")
         
         option = input("\nSelect an option: ").strip()
         
@@ -60,8 +61,10 @@ def interactive_menu(monitor):
         elif option == '7':
             configure_telegram()
         elif option == '8':
-            run_telegram_bot_interactive()
+            configure_openrouter()
         elif option == '9':
+            run_telegram_bot_interactive()
+        elif option == '10':
             print(f"\n{Colors.green('Heimdall will continue watching your realms from Asgard. Farewell!')}")
             logger.info("Exiting Heimdall")
             break
@@ -335,6 +338,101 @@ def run_telegram_bot_interactive():
             print(f"\n{Colors.red('Failed to connect to bot: ' + str(info))}")
 
 
+def configure_openrouter():
+    """Configure OpenRouter AI settings interactively"""
+    print(f"\n{Colors.green(Colors.bold('Configure OpenRouter AI'))}")
+    print("="*30)
+    
+    # Load current config
+    current_config = load_config()
+    if not current_config:
+        print(f"{Colors.red('Error loading configuration')}")
+        return
+    
+    # Get current OpenRouter settings
+    openrouter_config = current_config.get('openrouter', {})
+    
+    # Display current settings
+    if openrouter_config:
+        print(f"\n{Colors.blue('Current OpenRouter settings:')}")
+        print(f"  Enabled: {Colors.green('Yes') if openrouter_config.get('enabled') else Colors.red('No')}")
+        print(f"  API Key: {'*' * 20 + openrouter_config.get('api_key', '')[-4:] if openrouter_config.get('api_key') else 'Not set'}")
+        print(f"  Model: {openrouter_config.get('model', 'Not set')}")
+    else:
+        print(f"  {Colors.yellow('No OpenRouter settings found')}")
+    
+    # Ask if user wants to update settings
+    update = input("\nDo you want to update OpenRouter settings? (y/n): ").strip().lower()
+    if update != 'y':
+        return
+    
+    # Update settings
+    if 'openrouter' not in current_config:
+        current_config['openrouter'] = {}
+    
+    openrouter_config = current_config['openrouter']
+    
+    # Enable/disable OpenRouter
+    enable = input("Enable AI-powered disk usage analysis? (y/n): ").strip().lower()
+    openrouter_config['enabled'] = (enable == 'y')
+    
+    if enable == 'y':
+        # API key
+        print(f"\n{Colors.blue('To get an OpenRouter API key:')}")
+        print("1. Go to https://openrouter.ai/")
+        print("2. Sign up or log in")
+        print("3. Go to Settings > API Keys")
+        print("4. Create a new API key")
+        
+        key_input = input("\nAPI Key (leave empty to keep current): ").strip()
+        if key_input:
+            openrouter_config['api_key'] = key_input
+        
+        # Model selection
+        print(f"\n{Colors.blue('Available models:')}")
+        print("1. deepseek/deepseek-r1-0528:free (Free, recommended)")
+        print("2. openai/gpt-3.5-turbo (Paid)")
+        print("3. anthropic/claude-3-haiku (Paid)")
+        print("4. Custom model")
+        
+        model_choice = input("\nSelect model [1]: ").strip() or "1"
+        
+        if model_choice == "1":
+            openrouter_config['model'] = "deepseek/deepseek-r1-0528:free"
+        elif model_choice == "2":
+            openrouter_config['model'] = "openai/gpt-3.5-turbo"
+        elif model_choice == "3":
+            openrouter_config['model'] = "anthropic/claude-3-haiku"
+        elif model_choice == "4":
+            custom_model = input("Enter custom model name: ").strip()
+            if custom_model:
+                openrouter_config['model'] = custom_model
+    
+    # Save config
+    with open(CONFIG_FILE, 'w') as f:
+        json.dump(current_config, f, indent=2)
+    
+    print(f"\n{Colors.green('OpenRouter settings updated successfully!')}")
+    
+    # Test connection if enabled
+    if openrouter_config['enabled'] and openrouter_config.get('api_key'):
+        test = input("\nDo you want to test the OpenRouter connection? (y/n): ").strip().lower()
+        if test == 'y':
+            try:
+                from heimdall.ai_assistant import AIAssistant
+                ai = AIAssistant(current_config)
+                success, message = ai.test_connection()
+                
+                if success:
+                    print(f"\n{Colors.green('Connection successful!')}")
+                    print(f"{message}")
+                else:
+                    print(f"\n{Colors.red('Connection failed: ' + message)}")
+            except Exception as e:
+                logger.error(f"Error testing OpenRouter: {str(e)}")
+                print(f"\n{Colors.red('Error testing connection: ' + str(e))}")
+
+
 def configure_telegram():
     """Configure Telegram bot settings interactively"""
     print(f"\n{Colors.green(Colors.bold('Configure Telegram Bot'))}")
@@ -540,6 +638,7 @@ def main():
     group.add_argument('-c', '--check', action='store_true', help='Check all servers (non-interactive)')
     group.add_argument('--configure-smtp', action='store_true', help='Configure SMTP settings interactively')
     group.add_argument('--configure-telegram', action='store_true', help='Configure Telegram bot settings interactively')
+    group.add_argument('--configure-openrouter', action='store_true', help='Configure OpenRouter AI settings interactively')
     group.add_argument('--test-email', action='store_true', help='Send a test email to verify SMTP settings')
     group.add_argument('--test-telegram', action='store_true', help='Send a test Telegram message to all subscribers')
     group.add_argument('--telegram-bot', action='store_true', help='Run Telegram bot in standalone mode (for handling subscriptions)')
@@ -560,6 +659,11 @@ def main():
     # Configure Telegram if requested
     if args.configure_telegram:
         configure_telegram()
+        return
+    
+    # Configure OpenRouter if requested
+    if args.configure_openrouter:
+        configure_openrouter()
         return
     
     # Load configuration
