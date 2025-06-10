@@ -112,6 +112,9 @@ class AlertManager:
         # Save updated alert status
         self.save_alert_status()
         
+        # Get alert_cooldown for email (in case it wasn't set above)
+        alert_cooldown = self.config.get('alert_cooldown', 1)  # Default to 1 hour if not configured
+        
         # Send email if enabled and needed
         if self.config and self.config.get('email', {}).get('enabled', False) and should_send_email:
             self._send_email_alert(nickname, hostname, message, is_new_alert, alert_cooldown)
