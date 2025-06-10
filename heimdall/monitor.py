@@ -66,21 +66,22 @@ class ServerMonitor:
         """Get a list of running services on the server."""
         try:
             # Use systemctl to list running services on systemd-based systems
-            stdin, stdout, stderr = client.exec_command("systemctl list-units --type=service --state=running | grep \".service\" | awk '{print $1}'")
-            systemd_services = stdout.read().decode('utf-8').strip().split('\n')
+            # Set LANG=C to avoid Unicode characters in output
+            stdin, stdout, stderr = client.exec_command("LANG=C LC_ALL=C systemctl list-units --type=service --state=running --no-pager --no-legend | grep \".service\" | awk '{print $1}'")
+            systemd_services = stdout.read().decode('utf-8', errors='replace').strip().split('\n')
             
             # If no systemd services found, try using service command for older systems
             if not systemd_services or systemd_services == ['']:
-                stdin, stdout, stderr = client.exec_command("service --status-all 2>&1 | grep '\[ + \]' | awk '{print $4}'")
-                sysv_services = stdout.read().decode('utf-8').strip().split('\n')
+                stdin, stdout, stderr = client.exec_command("LANG=C LC_ALL=C service --status-all 2>&1 | grep '\[ + \]' | awk '{print $4}'")
+                sysv_services = stdout.read().decode('utf-8', errors='replace').strip().split('\n')
                 if sysv_services and sysv_services != ['']:
                     return sysv_services
             else:
                 return [s.replace('.service', '') for s in systemd_services if s]
                 
             # As a last resort, try using ps to find processes that might be services
-            stdin, stdout, stderr = client.exec_command("ps -eo comm= | sort | uniq")
-            processes = stdout.read().decode('utf-8').strip().split('\n')
+            stdin, stdout, stderr = client.exec_command("LANG=C LC_ALL=C ps -eo comm= | sort | uniq")
+            processes = stdout.read().decode('utf-8', errors='replace').strip().split('\n')
             return [p for p in processes if p and not p.startswith('[')][:20]  # Limit to first 20 to avoid overwhelming
             
         except Exception as e:
@@ -154,18 +155,18 @@ class ServerMonitor:
         """Check if a service is running on the server."""
         try:
             # Try systemctl first (for systemd systems)
-            stdin, stdout, stderr = client.exec_command(f"systemctl is-active {service} 2>/dev/null || echo 'inactive'")
-            status = stdout.read().decode('utf-8').strip()
+            stdin, stdout, stderr = client.exec_command(f"LANG=C LC_ALL=C systemctl is-active {service} 2>/dev/null || echo 'inactive'")
+            status = stdout.read().decode('utf-8', errors='replace').strip()
             
             if status == 'inactive':
                 # Try service command for older systems
-                stdin, stdout, stderr = client.exec_command(f"service {service} status 2>/dev/null | grep -q 'running' && echo 'active' || echo 'inactive'")
-                status = stdout.read().decode('utf-8').strip()
+                stdin, stdout, stderr = client.exec_command(f"LANG=C LC_ALL=C service {service} status 2>/dev/null | grep -q 'running' && echo 'active' || echo 'inactive'")
+                status = stdout.read().decode('utf-8', errors='replace').strip()
                 
                 if status == 'inactive':
                     # Last resort: check if process is running
-                    stdin, stdout, stderr = client.exec_command(f"ps -ef | grep -v grep | grep -q '{service}' && echo 'active' || echo 'inactive'")
-                    status = stdout.read().decode('utf-8').strip()
+                    stdin, stdout, stderr = client.exec_command(f"LANG=C LC_ALL=C ps -ef | grep -v grep | grep -q '{service}' && echo 'active' || echo 'inactive'")
+                    status = stdout.read().decode('utf-8', errors='replace').strip()
             
             return status == 'active'
             
@@ -228,7 +229,7 @@ class ServerMonitor:
             # Check CPU usage
             print(f"CPU Usage: ", end='')
             stdin, stdout, stderr = client.exec_command("top -bn1 | grep 'Cpu(s)' | awk '{print $2 + $4}'")
-            cpu_output = stdout.read().decode('utf-8').strip()
+            cpu_output = stdout.read().decode('utf-8', errors='replace').strip()
             
             if cpu_output:
                 cpu_usage = float(cpu_output)
@@ -249,7 +250,7 @@ class ServerMonitor:
             # Check Memory usage
             print(f"Memory Usage: ", end='')
             stdin, stdout, stderr = client.exec_command("free | grep Mem")
-            mem_output = stdout.read().decode('utf-8').strip()
+            mem_output = stdout.read().decode('utf-8', errors='replace').strip()
             
             if mem_output:
                 mem_parts = mem_output.split()
@@ -275,7 +276,7 @@ class ServerMonitor:
             print(f"Disk Usage: ")
             stdin, stdout, stderr = client.exec_command(
                 "df -h | grep -v tmpfs | grep -v devtmpfs |grep -v snapd | grep -v Filesystem")
-            disk_output_all = stdout.read().decode('utf-8').strip().split('\n')
+            disk_output_all = stdout.read().decode('utf-8', errors='replace').strip().split('\n')
             
             if disk_output_all:
                 critical_disks = []
