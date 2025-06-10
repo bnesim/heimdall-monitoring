@@ -1,0 +1,14 @@
+logs/alerts.log
+logs/heimdall.log
+.gitignore
+alert_status.json
+config.json
+servers.json
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.pyc
