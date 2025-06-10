@@ -17,6 +17,15 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 # Test email configuration
 ./heimdall.py --test-email
+
+# Configure Telegram bot
+./heimdall.py --configure-telegram
+
+# Run Telegram bot (for handling subscriptions)
+./heimdall.py --telegram-bot
+
+# Test Telegram configuration
+./heimdall.py --test-telegram
 ```
 
 ### Development

@@ -40,7 +40,8 @@ def interactive_menu(monitor):
         print("5. Check all servers")
         print("6. Configure SMTP settings")
         print("7. Configure Telegram bot")
-        print("8. Exit")
+        print("8. Run Telegram bot (for subscriptions)")
+        print("9. Exit")
         
         option = input("\nSelect an option: ").strip()
         
@@ -59,6 +60,8 @@ def interactive_menu(monitor):
         elif option == '7':
             configure_telegram()
         elif option == '8':
+            run_telegram_bot_interactive()
+        elif option == '9':
             print(f"\n{Colors.green('Heimdall will continue watching your realms from Asgard. Farewell!')}")
             logger.info("Exiting Heimdall")
             break
@@ -284,6 +287,54 @@ def edit_server(monitor):
         print(f"\n{Colors.red('Server not updated.')}")
 
 
+def run_telegram_bot_interactive():
+    """Run Telegram bot from interactive menu"""
+    config = load_config()
+    
+    if not config or not config.get('telegram', {}).get('enabled', False) or not config.get('telegram', {}).get('bot_token'):
+        print(f"\n{Colors.red('Telegram bot is not configured.')}")
+        configure = input("Would you like to configure it now? (y/n): ").strip().lower()
+        if configure == 'y':
+            configure_telegram()
+            config = load_config()  # Reload config after configuration
+        else:
+            return
+    
+    if config and config.get('telegram', {}).get('enabled', False) and config.get('telegram', {}).get('bot_token'):
+        print(f"\n{Colors.green('Starting Telegram bot...')}")
+        print(f"{Colors.blue('Bot will handle subscription commands. Press Ctrl+C to return to menu.')}")
+        
+        from heimdall.telegram import TelegramBot
+        bot = TelegramBot(config)
+        
+        # Test connection
+        success, info = bot.test_connection()
+        if success:
+            print(f"\n{Colors.green('Bot connected successfully!')}")
+            print(f"Bot username: @{info.get('username', 'Unknown')}")
+            print(f"Current subscribers: {len(bot.subscribers)}")
+            print(f"\n{Colors.blue('Listening for commands...')}")
+            print(f"{Colors.yellow('Users can now send commands to your bot:')}")
+            print("  /start - Subscribe to alerts")
+            print("  /status - Check subscription status")
+            print("  /stop - Unsubscribe")
+            print("  /help - Show help")
+            
+            # Start polling
+            bot.start_polling()
+            
+            # Keep the bot running until interrupted
+            try:
+                while True:
+                    time.sleep(1)
+            except KeyboardInterrupt:
+                print(f"\n{Colors.yellow('Stopping bot...')}")
+                bot.stop_polling()
+                print(f"{Colors.green('Bot stopped. Returning to menu.')}")
+        else:
+            print(f"\n{Colors.red('Failed to connect to bot: ' + str(info))}")
+
+
 def configure_telegram():
     """Configure Telegram bot settings interactively"""
     print(f"\n{Colors.green(Colors.bold('Configure Telegram Bot'))}")
@@ -491,6 +542,7 @@ def main():
     group.add_argument('--configure-telegram', action='store_true', help='Configure Telegram bot settings interactively')
     group.add_argument('--test-email', action='store_true', help='Send a test email to verify SMTP settings')
     group.add_argument('--test-telegram', action='store_true', help='Send a test Telegram message to all subscribers')
+    group.add_argument('--telegram-bot', action='store_true', help='Run Telegram bot in standalone mode (for handling subscriptions)')
     
     args = parser.parse_args()
     
@@ -535,6 +587,40 @@ def main():
                 print(f"{Colors.red('Failed to send test message.')}")
         else:
             print(f"{Colors.red('Telegram alerts are not enabled. Use --configure-telegram to enable.')}")
+        return
+    
+    # Run Telegram bot in standalone mode
+    if args.telegram_bot:
+        if config and config.get('telegram', {}).get('enabled', False) and config.get('telegram', {}).get('bot_token'):
+            print(f"{Colors.green('Starting Telegram bot in standalone mode...')}")
+            print(f"{Colors.blue('Bot will handle subscription commands. Press Ctrl+C to stop.')}")
+            
+            from heimdall.telegram import TelegramBot
+            bot = TelegramBot(config)
+            
+            # Test connection
+            success, info = bot.test_connection()
+            if success:
+                print(f"\n{Colors.green('Bot connected successfully!')}")
+                print(f"Bot username: @{info.get('username', 'Unknown')}")
+                print(f"Current subscribers: {len(bot.subscribers)}")
+                print(f"\n{Colors.blue('Listening for commands...')}")
+                
+                # Start polling
+                bot.start_polling()
+                
+                # Keep the bot running
+                try:
+                    while True:
+                        time.sleep(1)
+                except KeyboardInterrupt:
+                    print(f"\n{Colors.yellow('Stopping bot...')}")
+                    bot.stop_polling()
+                    print(f"{Colors.green('Bot stopped.')}")
+            else:
+                print(f"{Colors.red('Failed to connect to bot: ' + str(info))}")
+        else:
+            print(f"{Colors.red('Telegram bot is not configured. Use --configure-telegram to set it up.')}")
         return
     
     server_config = ServerConfig()
