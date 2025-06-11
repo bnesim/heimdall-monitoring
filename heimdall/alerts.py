@@ -143,8 +143,11 @@ class AlertManager:
     def check_alert_resolution(self, nickname, hostname, metric, current_value, threshold):
         """Check if an alert has been resolved."""
         alert_id = self.get_alert_id(nickname, hostname, metric.lower())
+        logger.debug(f"Checking resolution for {nickname}:{hostname}:{metric} - alert_id: {alert_id}")
+        logger.debug(f"Active alerts: {list(self.alert_status['active_alerts'].keys())}")
         
         if alert_id in self.alert_status["active_alerts"]:
+            logger.debug(f"Found active alert for {alert_id}, current_value={current_value}, threshold={threshold}")
             if current_value < threshold:
                 # Alert is resolved
                 alert = self.alert_status["active_alerts"].pop(alert_id)
@@ -175,7 +178,10 @@ class AlertManager:
                 if self.telegram_bot.is_configured():
                     telegram_sent = self.telegram_bot.send_resolution_to_all(nickname, hostname, metric, current_value, threshold, duration_str)
                 
+                logger.info(f"Resolution notifications sent - Email: {email_sent}, Telegram: {telegram_sent}")
                 return email_sent or telegram_sent
+        else:
+            logger.debug(f"No active alert found for {alert_id}")
         return False
     
     def _send_email_alert(self, nickname, hostname, message, is_new_alert, alert_cooldown):

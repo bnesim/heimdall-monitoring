@@ -414,7 +414,7 @@ class ServerMonitor:
                         print(Colors.green("Running"))
                         # Check if this resolves an existing alert
                         self.alert_manager.check_alert_resolution(nickname, hostname, 
-                            f"Service ({service})", 0, 1)
+                            f"service:{service}", 0, 1)
                     else:
                         print(Colors.red("Not Running"))
                         services_down.append(service)
