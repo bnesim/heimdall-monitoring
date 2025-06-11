@@ -9,7 +9,7 @@ This module provides AI-powered suggestions for disk usage analysis.
 import json
 import logging
 import requests
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, Tuple
 
 logger = logging.getLogger("Heimdall")
 
@@ -123,7 +123,7 @@ Keep your response concise and actionable, focusing on the most important findin
         
         return formatted
     
-    def test_connection(self) -> tuple[bool, str]:
+    def test_connection(self) -> Tuple[bool, str]:
         """Test the OpenRouter connection."""
         if not self.api_key:
             return False, "No API key configured"
