@@ -321,9 +321,12 @@ class ServerMonitor:
                                     print(f"  {mount_point}: {Colors.red(f'{disk_usage:.1f}% (ALERT - above threshold)')}")
                                 else:
                                     print(f"  {mount_point}: {Colors.green(f'{disk_usage:.1f}%')}")
-                                    self.alert_manager.check_alert_resolution(
-                                        nickname, hostname, f"Disk ({mount_point})",
+                                    # Check for resolution
+                                    resolved = self.alert_manager.check_alert_resolution(
+                                        nickname, hostname, f"disk:{mount_point}",
                                         disk_usage, self.disk_threshold)
+                                    if resolved:
+                                        print(f"    → Resolution notification sent for {mount_point}")
                             except ValueError:
                                 print(f"  {mount_point}: {Colors.yellow('Unable to parse usage')}")
                 
