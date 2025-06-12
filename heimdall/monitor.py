@@ -228,6 +228,9 @@ class ServerMonitor:
             client.connect(**connect_params)
             print(Colors.green("Success"))
             
+            # Check if this resolves a server unreachable alert
+            self.alert_manager.check_alert_resolution(nickname, hostname, "server", 0, 1)
+            
             # Check CPU usage
             print(f"CPU Usage: ", end='')
             stdin, stdout, stderr = client.exec_command("top -bn1 | grep 'Cpu(s)' | awk '{print $2 + $4}'")
