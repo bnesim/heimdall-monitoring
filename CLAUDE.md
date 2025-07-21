@@ -100,6 +100,27 @@ Heimdall is a server monitoring system that uses SSH to connect to remote server
 - **Model Support**: Default uses free deepseek model, supports GPT-3.5, Claude, etc.
 - **Alert Enhancement**: AI suggestions appended to disk alert messages
 
+### Alert Notification Enhancements (2025-07-21)
+
+Recent improvements to reduce notification spam while maintaining system awareness:
+
+**Open Alerts Context:**
+- NEW ALERT emails/Telegram include HTML table/text list of other currently open alerts
+- ALERT RESOLVED emails/Telegram include remaining open alerts (excluding the resolved one)
+- Provides full system context in every notification
+
+**Smart Cooldown Management:**
+- Any notification sent (NEW, RECURRING, or RESOLVED) resets cooldown timer for ALL active alerts
+- Prevents multiple recurring alerts from firing simultaneously after any notification
+- Significantly reduces notification volume while maintaining awareness
+
+**Implementation Details:**
+- `get_open_alerts()` - Retrieves all active alerts with duration calculation
+- `format_open_alerts_html()` - Formats alerts as HTML table for emails
+- `format_open_alerts_text()` - Formats alerts as text list for Telegram
+- `reset_all_alert_cooldowns()` - Resets last_notified for all active alerts
+- Alert duration shows days/hours/minutes since first detection
+
 ### Testing Changes
 
 When modifying monitoring logic:
@@ -110,6 +131,8 @@ When modifying monitoring logic:
 5. Ensure special filesystems are properly skipped
 6. Test both systemd and non-systemd service detection
 7. Verify AI suggestions appear in disk alerts (when configured)
+8. Test open alerts context appears in NEW/RESOLVED notifications
+9. Verify cooldown reset prevents notification spam
 
 ### systemd Service Configuration
 
