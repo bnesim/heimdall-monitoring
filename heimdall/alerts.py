@@ -47,6 +47,100 @@ class AlertManager:
         with open(ALERT_STATUS_FILE, 'w') as f:
             json.dump(self.alert_status, f, indent=2)
     
+    def get_open_alerts(self):
+        """Get a list of all currently open alerts."""
+        open_alerts = []
+        for alert_id, alert in self.alert_status["active_alerts"].items():
+            # Calculate duration
+            first_detected = datetime.strptime(alert["first_detected"], "%Y-%m-%d %H:%M:%S")
+            now = datetime.now()
+            duration = now - first_detected
+            hours, remainder = divmod(duration.seconds, 3600)
+            minutes, _ = divmod(remainder, 60)
+            duration_str = f"{duration.days} days, {hours} hours" if duration.days > 0 else f"{hours} hours, {minutes} minutes"
+            
+            open_alerts.append({
+                "server": alert["server"],
+                "hostname": alert["hostname"],
+                "type": alert["type"],
+                "message": alert["message"],
+                "first_detected": alert["first_detected"],
+                "duration": duration_str
+            })
+        
+        return open_alerts
+    
+    def format_open_alerts_html(self, exclude_alert_id=None):
+        """Format open alerts as HTML table for email."""
+        open_alerts = self.get_open_alerts()
+        
+        # Exclude current alert if specified (for resolution messages)
+        if exclude_alert_id:
+            excluded_alert = self.alert_status["active_alerts"].get(exclude_alert_id)
+            if excluded_alert:
+                open_alerts = [alert for alert in open_alerts if not (
+                    alert["server"] == excluded_alert["server"] and 
+                    alert["hostname"] == excluded_alert["hostname"] and 
+                    alert["type"] == excluded_alert["type"]
+                )]
+        
+        if not open_alerts:
+            return "<p style='color: #48c774; font-style: italic;'>No other open alerts.</p>"
+        
+        html = """
+        <div class="open-alerts">
+            <h3 style="color: #333; margin: 20px 0 10px 0;">Other Open Alerts:</h3>
+            <table style="width: 100%; border-collapse: collapse; margin-bottom: 20px;">
+                <thead>
+                    <tr style="background-color: #f5f5f5;">
+                        <th style="padding: 8px; text-align: left; border-bottom: 1px solid #ddd;">Server</th>
+                        <th style="padding: 8px; text-align: left; border-bottom: 1px solid #ddd;">Issue</th>
+                        <th style="padding: 8px; text-align: left; border-bottom: 1px solid #ddd;">Duration</th>
+                    </tr>
+                </thead>
+                <tbody>
+        """
+        
+        for alert in open_alerts:
+            html += f"""
+                    <tr>
+                        <td style="padding: 8px; border-bottom: 1px solid #eee; font-family: monospace;">{alert["server"]}</td>
+                        <td style="padding: 8px; border-bottom: 1px solid #eee;">{alert["message"]}</td>
+                        <td style="padding: 8px; border-bottom: 1px solid #eee;">{alert["duration"]}</td>
+                    </tr>
+            """
+        
+        html += """
+                </tbody>
+            </table>
+        </div>
+        """
+        
+        return html
+    
+    def format_open_alerts_text(self, exclude_alert_id=None):
+        """Format open alerts as plain text for Telegram."""
+        open_alerts = self.get_open_alerts()
+        
+        # Exclude current alert if specified (for resolution messages)
+        if exclude_alert_id:
+            excluded_alert = self.alert_status["active_alerts"].get(exclude_alert_id)
+            if excluded_alert:
+                open_alerts = [alert for alert in open_alerts if not (
+                    alert["server"] == excluded_alert["server"] and 
+                    alert["hostname"] == excluded_alert["hostname"] and 
+                    alert["type"] == excluded_alert["type"]
+                )]
+        
+        if not open_alerts:
+            return "\n\n<i>No other open alerts.</i>"
+        
+        text = "\n\n<b>Other Open Alerts:</b>\n"
+        for alert in open_alerts:
+            text += f"• <b>{alert['server']}</b> ({alert['hostname']}): {alert['message']} - Duration: {alert['duration']}\n"
+        
+        return text
+    
     def get_alert_id(self, nickname, hostname, alert_type):
         """Generate a unique ID for an alert."""
         alert_string = f"{nickname}:{hostname}:{alert_type}"
@@ -130,7 +224,8 @@ class AlertManager:
             
             # Send Telegram if enabled
             if self.telegram_bot.is_configured():
-                telegram_sent = self.telegram_bot.send_alert_to_all(nickname, hostname, message, is_new_alert)
+                open_alerts_text = self.format_open_alerts_text()
+                telegram_sent = self.telegram_bot.send_alert_to_all(nickname, hostname, message, is_new_alert, open_alerts_text)
         
         # Log the outcome
         if not should_send_email and alert_id in self.alert_status["active_alerts"]:
@@ -173,10 +268,10 @@ class AlertManager:
                 telegram_sent = False
                 
                 if self.config and self.config.get('email', {}).get('enabled', False):
-                    email_sent = self._send_resolution_email(nickname, hostname, metric, current_value, threshold, alert)
+                    email_sent = self._send_resolution_email(nickname, hostname, metric, current_value, threshold, alert, alert_id)
                 
                 if self.telegram_bot.is_configured():
-                    telegram_sent = self.telegram_bot.send_resolution_to_all(nickname, hostname, metric, current_value, threshold, duration_str)
+                    telegram_sent = self.telegram_bot.send_resolution_to_all(nickname, hostname, metric, current_value, threshold, duration_str, self.format_open_alerts_text(alert_id))
                 
                 logger.info(f"Resolution notifications sent - Email: {email_sent}, Telegram: {telegram_sent}")
                 return email_sent or telegram_sent
@@ -195,6 +290,9 @@ class AlertManager:
             subject_prefix = "NEW ALERT" if is_new_alert else "RECURRING ALERT"
             msg['Subject'] = f"HEIMDALL {subject_prefix}: {nickname} - {message}"
             
+            # Get open alerts for inclusion in the email
+            open_alerts_html = self.format_open_alerts_html()
+            
             # Create HTML version of the message with logo from GitHub URL
             html = f"""
             <html>
@@ -211,6 +309,7 @@ class AlertManager:
                   .alert-message {{ font-size: 18px; color: #ff3860; background-color: #ffeeee; padding: 10px; border-radius: 4px; margin: 15px 0; }}
                   .timestamp {{ color: #777; font-size: 14px; margin-top: 20px; }}
                   .footer {{ margin-top: 30px; padding-top: 20px; border-top: 1px solid #eee; font-size: 12px; color: #777; }}
+                  .open-alerts {{ margin: 20px 0; padding: 15px; background-color: #f8f9fa; border-radius: 4px; border-left: 4px solid #ffc107; }}
                 </style>
               </head>
               <body>
@@ -233,6 +332,8 @@ class AlertManager:
                   <div class="timestamp">
                     Detected: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
                   </div>
+                  
+                  {open_alerts_html}
                   
                   <div class="footer">
                     This is an automated message from Heimdall, the all-seeing guardian of your servers.
@@ -260,7 +361,7 @@ class AlertManager:
             logger.error(f"Failed to send alert email: {str(e)}")
             return False
     
-    def _send_resolution_email(self, nickname, hostname, metric, current_value, threshold, alert_info):
+    def _send_resolution_email(self, nickname, hostname, metric, current_value, threshold, alert_info, alert_id=None):
         """Send an alert resolution email."""
         try:
             msg = MIMEMultipart('alternative')
@@ -275,6 +376,9 @@ class AlertManager:
             hours, remainder = divmod(duration.seconds, 3600)
             minutes, seconds = divmod(remainder, 60)
             duration_str = f"{duration.days} days, {hours} hours, {minutes} minutes" if duration.days > 0 else f"{hours} hours, {minutes} minutes"
+            
+            # Get open alerts for inclusion in the email (excluding the one being resolved)
+            open_alerts_html = self.format_open_alerts_html(alert_id)
             
             # Create HTML version of the message with logo from GitHub URL
             html = f"""
@@ -295,6 +399,7 @@ class AlertManager:
                     .detail-label {{ font-weight: bold; }}
                     .timestamp {{ color: #777; font-size: 14px; margin-top: 20px; }}
                     .footer {{ margin-top: 30px; padding-top: 20px; border-top: 1px solid #eee; font-size: 12px; color: #777; }}
+                    .open-alerts {{ margin: 20px 0; padding: 15px; background-color: #f8f9fa; border-radius: 4px; border-left: 4px solid #ffc107; }}
                 </style>
             </head>
             <body>
@@ -332,6 +437,8 @@ class AlertManager:
                             <span>{alert_info["message"]}</span>
                         </div>
                     </div>
+                    
+                    {open_alerts_html}
                     
                     <div class="footer">
                         This is an automated message from Heimdall, the all-seeing guardian of your servers.

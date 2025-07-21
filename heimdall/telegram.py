@@ -100,7 +100,7 @@ class TelegramBot:
             logger.error(f"Failed to send Telegram message to {chat_id}: {str(e)}")
             return False
     
-    def send_alert_to_all(self, nickname, hostname, message, is_new_alert=True):
+    def send_alert_to_all(self, nickname, hostname, message, is_new_alert=True, open_alerts_text=""):
         """Send alert to all subscribers."""
         if not self.is_configured():
             return False
@@ -114,7 +114,7 @@ class TelegramBot:
 <b>Hostname:</b> <code>{hostname}</code>
 <b>Issue:</b> {message}
 
-<b>Time:</b> {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
+<b>Time:</b> {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}{open_alerts_text}
 
 <i>This is an automated alert from Heimdall Monitoring System.</i>"""
         
@@ -127,7 +127,7 @@ class TelegramBot:
         logger.info(f"Sent Telegram alert to {sent_count}/{len(self.subscribers)} subscribers")
         return sent_count > 0
     
-    def send_resolution_to_all(self, nickname, hostname, metric, current_value, threshold, duration_str):
+    def send_resolution_to_all(self, nickname, hostname, metric, current_value, threshold, duration_str, open_alerts_text=""):
         """Send resolution notification to all subscribers."""
         if not self.is_configured():
             return False
@@ -143,7 +143,7 @@ class TelegramBot:
 
 <b>Resolved at:</b> {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
 
-<i>The issue has been resolved. System is back to normal.</i>"""
+<i>The issue has been resolved. System is back to normal.</i>{open_alerts_text}"""
         
         # Send to all subscribers
         sent_count = 0
