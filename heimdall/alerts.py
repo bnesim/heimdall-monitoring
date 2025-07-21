@@ -141,6 +141,12 @@ class AlertManager:
         
         return text
     
+    def reset_all_alert_cooldowns(self, current_time_str):
+        """Reset the last_notified timestamp for all active alerts."""
+        for alert_id in self.alert_status["active_alerts"]:
+            self.alert_status["active_alerts"][alert_id]["last_notified"] = current_time_str
+        logger.debug(f"Reset cooldown for {len(self.alert_status['active_alerts'])} active alerts")
+    
     def get_alert_id(self, nickname, hostname, alert_type):
         """Generate a unique ID for an alert."""
         alert_string = f"{nickname}:{hostname}:{alert_type}"
@@ -226,6 +232,12 @@ class AlertManager:
             if self.telegram_bot.is_configured():
                 open_alerts_text = self.format_open_alerts_text()
                 telegram_sent = self.telegram_bot.send_alert_to_all(nickname, hostname, message, is_new_alert, open_alerts_text)
+            
+            # If we sent a notification (NEW or RECURRING), reset cooldown for ALL active alerts
+            if email_sent or telegram_sent:
+                self.reset_all_alert_cooldowns(now_str)
+                self.save_alert_status()  # Save the updated timestamps
+                logger.info(f"Reset cooldown for all active alerts after sending {'NEW' if is_new_alert else 'RECURRING'} alert")
         
         # Log the outcome
         if not should_send_email and alert_id in self.alert_status["active_alerts"]:
@@ -272,6 +284,13 @@ class AlertManager:
                 
                 if self.telegram_bot.is_configured():
                     telegram_sent = self.telegram_bot.send_resolution_to_all(nickname, hostname, metric, current_value, threshold, duration_str, self.format_open_alerts_text(alert_id))
+                
+                # If we sent resolution notifications, reset cooldown for ALL remaining active alerts
+                if (email_sent or telegram_sent) and self.alert_status["active_alerts"]:
+                    resolved_time = alert["resolved_time"]
+                    self.reset_all_alert_cooldowns(resolved_time)
+                    self.save_alert_status()  # Save the updated timestamps
+                    logger.info(f"Reset cooldown for all remaining active alerts after sending RESOLVED notification")
                 
                 logger.info(f"Resolution notifications sent - Email: {email_sent}, Telegram: {telegram_sent}")
                 return email_sent or telegram_sent
