@@ -121,6 +121,34 @@ Recent improvements to reduce notification spam while maintaining system awarene
 - `reset_all_alert_cooldowns()` - Resets last_notified for all active alerts
 - Alert duration shows days/hours/minutes since first detection
 
+### Session-Based Alert Batching (2025-07-22)
+
+Major enhancement to notification system that batches all alerts per monitoring session:
+
+**Batch Notifications:**
+- Single email/Telegram per check session containing ALL new/recurring alerts
+- Single email/Telegram for ALL resolved alerts in the session
+- Dramatically reduces notifications for shared resources (e.g., NFS mounts)
+- Better overview of system state changes in one message
+
+**Session Management:**
+- `start_session()` - Begins collecting alerts instead of sending immediately
+- `end_session()` - Sends batch notifications for all queued alerts
+- Alerts grouped by server for better organization
+- Preserves AI disk analysis and all alert details
+
+**Notification Format:**
+- **Alert Summary**: Shows counts of new/recurring/resolved issues
+- **Server Sections**: Groups alerts by server with clear visual distinction
+- **Alert Types**: NEW (red), RECURRING (yellow), RESOLVED (green)
+- **Open Alerts**: Still includes list of all open alerts at bottom
+
+**Benefits:**
+- Reduces notification spam for shared disk issues
+- Single comprehensive view per monitoring run
+- Maintains detailed alert information
+- Cooldown still resets for all active alerts
+
 ### Testing Changes
 
 When modifying monitoring logic:
@@ -133,6 +161,8 @@ When modifying monitoring logic:
 7. Verify AI suggestions appear in disk alerts (when configured)
 8. Test open alerts context appears in NEW/RESOLVED notifications
 9. Verify cooldown reset prevents notification spam
+10. Test batch notifications work correctly with multiple alerts
+11. Verify shared disk alerts only generate one notification per session
 
 ### systemd Service Configuration
 

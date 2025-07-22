@@ -454,5 +454,15 @@ class ServerMonitor:
         print("=" * 25)
         logger.info(f"Starting check of all servers ({len(servers)} total)")
         
+        # Start alert session
+        self.alert_manager.start_session()
+        
+        # Check all servers
         for server in servers:
             self.check_server(server)
+        
+        # End session and send batch notifications
+        self.alert_manager.end_session()
+        
+        print(f"\n{Colors.bold(Colors.green('Check Complete'))}")
+        logger.info("Completed check of all servers")

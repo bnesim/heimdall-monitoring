@@ -29,6 +29,12 @@ class AlertManager:
         self.telegram_bot = TelegramBot(config)
         if self.telegram_bot.is_configured():
             self.telegram_bot.start_polling()
+        
+        # Session-based alert collection
+        self.session_active = False
+        self.session_new_alerts = []
+        self.session_resolved_alerts = []
+        self.session_recurring_alerts = []
     
     def load_alert_status(self):
         """Load the alert status from file."""
@@ -46,6 +52,47 @@ class AlertManager:
         """Save the alert status to file."""
         with open(ALERT_STATUS_FILE, 'w') as f:
             json.dump(self.alert_status, f, indent=2)
+    
+    def start_session(self):
+        """Start a new alert collection session."""
+        self.session_active = True
+        self.session_new_alerts = []
+        self.session_resolved_alerts = []
+        self.session_recurring_alerts = []
+        logger.debug("Started new alert session")
+    
+    def end_session(self):
+        """End the alert session and send batch notifications."""
+        if not self.session_active:
+            return
+        
+        self.session_active = False
+        logger.debug(f"Ending alert session - New: {len(self.session_new_alerts)}, Resolved: {len(self.session_resolved_alerts)}, Recurring: {len(self.session_recurring_alerts)}")
+        
+        # Send batch notifications
+        notifications_sent = False
+        
+        # Send new/recurring alerts together
+        if self.session_new_alerts or self.session_recurring_alerts:
+            if self._send_batch_alerts():
+                notifications_sent = True
+        
+        # Send resolved alerts
+        if self.session_resolved_alerts:
+            if self._send_batch_resolutions():
+                notifications_sent = True
+        
+        # Reset cooldown for all active alerts if we sent any notifications
+        if notifications_sent:
+            now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            self.reset_all_alert_cooldowns(now_str)
+            self.save_alert_status()
+            logger.info("Reset cooldown for all active alerts after sending batch notifications")
+        
+        # Clear session data
+        self.session_new_alerts = []
+        self.session_resolved_alerts = []
+        self.session_recurring_alerts = []
     
     def get_open_alerts(self):
         """Get a list of all currently open alerts."""
@@ -216,14 +263,32 @@ class AlertManager:
         # Save updated alert status
         self.save_alert_status()
         
-        # Get alert_cooldown for email (in case it wasn't set above)
-        alert_cooldown = self.config.get('alert_cooldown', 1)  # Default to 1 hour if not configured
+        # If we're in a session, queue the alert instead of sending immediately
+        if self.session_active and should_send_email:
+            alert_data = {
+                "server": nickname,
+                "hostname": hostname,
+                "message": message,
+                "type": alert_type,
+                "alert_id": alert_id,
+                "is_new": is_new_alert,
+                "is_recurring": is_recurring
+            }
+            
+            if is_new_alert:
+                self.session_new_alerts.append(alert_data)
+            else:
+                self.session_recurring_alerts.append(alert_data)
+            
+            logger.debug(f"Queued {'new' if is_new_alert else 'recurring'} alert for {nickname} in session")
+            return True
         
-        # Send notifications if needed
+        # Original immediate notification logic (for non-session mode)
+        alert_cooldown = self.config.get('alert_cooldown', 1)
         email_sent = False
         telegram_sent = False
         
-        if should_send_email:
+        if should_send_email and not self.session_active:
             # Send email if enabled
             if self.config and self.config.get('email', {}).get('enabled', False):
                 email_sent = self._send_email_alert(nickname, hostname, message, is_new_alert, alert_cooldown)
@@ -242,10 +307,10 @@ class AlertManager:
         # Log the outcome
         if not should_send_email and alert_id in self.alert_status["active_alerts"]:
             logger.info(f"Alert {alert_id} logged but notifications suppressed (rate limited)")
-        elif not email_sent and not telegram_sent:
+        elif not email_sent and not telegram_sent and not self.session_active:
             logger.info(f"Alert {alert_id} logged (no notifications sent)")
         
-        return email_sent or telegram_sent
+        return email_sent or telegram_sent or self.session_active
     
     def check_alert_resolution(self, nickname, hostname, metric, current_value, threshold):
         """Check if an alert has been resolved."""
@@ -267,7 +332,7 @@ class AlertManager:
                 # Log resolution
                 logger.info(f"{nickname} ({hostname}): {metric} alert resolved - now at {current_value:.1f}%, below threshold of {threshold}%")
                 
-                # Calculate duration for Telegram
+                # Calculate duration
                 first_detected = datetime.strptime(alert["first_detected"], "%Y-%m-%d %H:%M:%S")
                 resolved_time = datetime.strptime(alert["resolved_time"], "%Y-%m-%d %H:%M:%S")
                 duration = resolved_time - first_detected
@@ -275,7 +340,23 @@ class AlertManager:
                 minutes, seconds = divmod(remainder, 60)
                 duration_str = f"{duration.days} days, {hours} hours, {minutes} minutes" if duration.days > 0 else f"{hours} hours, {minutes} minutes"
                 
-                # Send resolution notifications
+                # If we're in a session, queue the resolution
+                if self.session_active:
+                    resolution_data = {
+                        "server": nickname,
+                        "hostname": hostname,
+                        "metric": metric,
+                        "current_value": current_value,
+                        "threshold": threshold,
+                        "alert_info": alert,
+                        "alert_id": alert_id,
+                        "duration": duration_str
+                    }
+                    self.session_resolved_alerts.append(resolution_data)
+                    logger.debug(f"Queued resolution for {nickname} {metric} in session")
+                    return True
+                
+                # Original immediate notification logic (for non-session mode)
                 email_sent = False
                 telegram_sent = False
                 
@@ -541,3 +622,386 @@ If you're receiving this, your Telegram configuration is working correctly!"""
         
         logger.info(f"Test message sent to {sent_count}/{len(self.telegram_bot.subscribers)} Telegram subscribers")
         return sent_count > 0
+    
+    def _send_batch_alerts(self):
+        """Send batch email and Telegram for all queued alerts."""
+        if not self.session_new_alerts and not self.session_recurring_alerts:
+            return False
+        
+        all_alerts = self.session_new_alerts + self.session_recurring_alerts
+        
+        # Group alerts by server for better organization
+        alerts_by_server = {}
+        for alert in all_alerts:
+            server_key = f"{alert['server']} ({alert['hostname']})"
+            if server_key not in alerts_by_server:
+                alerts_by_server[server_key] = {"new": [], "recurring": []}
+            
+            if alert['is_new']:
+                alerts_by_server[server_key]["new"].append(alert)
+            else:
+                alerts_by_server[server_key]["recurring"].append(alert)
+        
+        notifications_sent = False
+        
+        # Send batch email
+        if self.config and self.config.get('email', {}).get('enabled', False):
+            if self._send_batch_email_alerts(alerts_by_server):
+                notifications_sent = True
+        
+        # Send batch Telegram
+        if self.telegram_bot.is_configured():
+            if self._send_batch_telegram_alerts(alerts_by_server):
+                notifications_sent = True
+        
+        return notifications_sent
+    
+    def _send_batch_resolutions(self):
+        """Send batch email and Telegram for all resolved alerts."""
+        if not self.session_resolved_alerts:
+            return False
+        
+        # Group resolutions by server
+        resolutions_by_server = {}
+        for resolution in self.session_resolved_alerts:
+            server_key = f"{resolution['server']} ({resolution['hostname']})"
+            if server_key not in resolutions_by_server:
+                resolutions_by_server[server_key] = []
+            resolutions_by_server[server_key].append(resolution)
+        
+        notifications_sent = False
+        
+        # Send batch email
+        if self.config and self.config.get('email', {}).get('enabled', False):
+            if self._send_batch_resolution_email(resolutions_by_server):
+                notifications_sent = True
+        
+        # Send batch Telegram
+        if self.telegram_bot.is_configured():
+            if self._send_batch_telegram_resolutions(resolutions_by_server):
+                notifications_sent = True
+        
+        return notifications_sent
+    
+    def _send_batch_email_alerts(self, alerts_by_server):
+        """Send a single email with all new and recurring alerts."""
+        try:
+            msg = MIMEMultipart('alternative')
+            msg['From'] = self.config['email']['sender']
+            msg['To'] = ", ".join(self.config['email']['recipients'])
+            
+            # Count alerts
+            new_count = sum(len(alerts["new"]) for alerts in alerts_by_server.values())
+            recurring_count = sum(len(alerts["recurring"]) for alerts in alerts_by_server.values())
+            
+            # Set subject
+            if new_count > 0 and recurring_count > 0:
+                msg['Subject'] = f"HEIMDALL ALERTS: {new_count} new, {recurring_count} recurring issues detected"
+            elif new_count > 0:
+                msg['Subject'] = f"HEIMDALL NEW ALERTS: {new_count} new issues detected"
+            else:
+                msg['Subject'] = f"HEIMDALL RECURRING ALERTS: {recurring_count} issues persist"
+            
+            # Get open alerts for inclusion
+            open_alerts_html = self.format_open_alerts_html()
+            
+            # Build HTML content
+            html = f"""
+            <html>
+              <head>
+                <style>
+                  body {{ font-family: Arial, sans-serif; line-height: 1.6; color: #333; background-color: #f9f9f9; margin: 0; padding: 0; }}
+                  .container {{ max-width: 800px; margin: 20px auto; padding: 20px; background-color: #fff; border-radius: 5px; border-top: 5px solid #ff3860; box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1); }}
+                  h1 {{ color: #ff3860; margin-top: 0; }}
+                  h2 {{ color: #333; margin-top: 30px; border-bottom: 2px solid #eee; padding-bottom: 10px; }}
+                  .logo {{ text-align: center; margin-bottom: 20px; }}
+                  .logo img {{ width: 150px; height: auto; }}
+                  .server-section {{ background-color: #f5f5f5; padding: 15px; border-radius: 4px; margin: 20px 0; }}
+                  .server-name {{ font-size: 18px; font-weight: bold; color: #333; }}
+                  .alert-item {{ margin: 10px 0; padding: 10px; border-left: 4px solid #ff3860; background-color: #fff; }}
+                  .new-alert {{ border-left-color: #ff3860; }}
+                  .recurring-alert {{ border-left-color: #ffc107; }}
+                  .alert-type {{ display: inline-block; padding: 2px 8px; border-radius: 3px; font-size: 12px; font-weight: bold; margin-right: 10px; }}
+                  .type-new {{ background-color: #ff3860; color: white; }}
+                  .type-recurring {{ background-color: #ffc107; color: #333; }}
+                  .timestamp {{ color: #777; font-size: 14px; margin-top: 20px; }}
+                  .footer {{ margin-top: 30px; padding-top: 20px; border-top: 1px solid #eee; font-size: 12px; color: #777; }}
+                  .summary {{ background-color: #f8f9fa; padding: 15px; border-radius: 4px; margin: 20px 0; }}
+                  .summary-item {{ display: inline-block; margin-right: 20px; }}
+                  .summary-count {{ font-size: 24px; font-weight: bold; }}
+                  .summary-label {{ font-size: 14px; color: #666; }}
+                </style>
+              </head>
+              <body>
+                <div class="container">
+                  <div class="logo">
+                    <img src="https://raw.githubusercontent.com/bnesim/heimdall-monitoring/refs/heads/main/HEIMDALL.png" alt="Heimdall Logo">
+                  </div>
+                  <h1>⚠️ Heimdall Alert Summary ⚠️</h1>
+                  
+                  <div class="summary">
+                    <div class="summary-item">
+                      <div class="summary-count" style="color: #ff3860;">{new_count}</div>
+                      <div class="summary-label">New Alerts</div>
+                    </div>
+                    <div class="summary-item">
+                      <div class="summary-count" style="color: #ffc107;">{recurring_count}</div>
+                      <div class="summary-label">Recurring Alerts</div>
+                    </div>
+                    <div class="summary-item">
+                      <div class="summary-count" style="color: #666;">{len(alerts_by_server)}</div>
+                      <div class="summary-label">Affected Servers</div>
+                    </div>
+                  </div>
+            """
+            
+            # Add alerts by server
+            for server_key, alerts in sorted(alerts_by_server.items()):
+                if not alerts["new"] and not alerts["recurring"]:
+                    continue
+                
+                html += f"""
+                  <div class="server-section">
+                    <div class="server-name">{server_key}</div>
+                """
+                
+                # Add new alerts
+                for alert in alerts["new"]:
+                    html += f"""
+                    <div class="alert-item new-alert">
+                      <span class="alert-type type-new">NEW</span>
+                      {alert['message']}
+                    </div>
+                    """
+                
+                # Add recurring alerts
+                for alert in alerts["recurring"]:
+                    html += f"""
+                    <div class="alert-item recurring-alert">
+                      <span class="alert-type type-recurring">RECURRING</span>
+                      {alert['message']}
+                    </div>
+                    """
+                
+                html += "</div>"
+            
+            html += f"""
+                  <div class="timestamp">
+                    Detected: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
+                  </div>
+                  
+                  {open_alerts_html}
+                  
+                  <div class="footer">
+                    This is an automated batch alert from Heimdall monitoring system.
+                    <br>You will not receive another notification about these issues for at least {self.config.get('alert_cooldown', 1)} hour(s).
+                  </div>
+                </div>
+              </body>
+            </html>
+            """
+            
+            msg.attach(MIMEText(html, 'html'))
+            
+            # Send the email
+            with smtplib.SMTP(self.config['email']['smtp_server'], 
+                            self.config['email']['smtp_port']) as server:
+                if self.config['email']['use_tls']:
+                    server.starttls()
+                server.login(self.config['email']['username'],
+                           self.config['email']['password'])
+                server.send_message(msg)
+            
+            logger.info(f"Batch alert email sent with {new_count} new and {recurring_count} recurring alerts")
+            return True
+        except Exception as e:
+            logger.error(f"Failed to send batch alert email: {str(e)}")
+            return False
+    
+    def _send_batch_resolution_email(self, resolutions_by_server):
+        """Send a single email with all resolved alerts."""
+        try:
+            msg = MIMEMultipart('alternative')
+            msg['From'] = self.config['email']['sender']
+            msg['To'] = ", ".join(self.config['email']['recipients'])
+            
+            # Count resolutions
+            total_resolved = sum(len(resolutions) for resolutions in resolutions_by_server.values())
+            
+            msg['Subject'] = f"HEIMDALL RESOLVED: {total_resolved} issues resolved"
+            
+            # Get open alerts for inclusion
+            open_alerts_html = self.format_open_alerts_html()
+            
+            # Build HTML content
+            html = f"""
+            <html>
+              <head>
+                <style>
+                  body {{ font-family: Arial, sans-serif; line-height: 1.6; color: #333; background-color: #f9f9f9; margin: 0; padding: 0; }}
+                  .container {{ max-width: 800px; margin: 20px auto; padding: 20px; background-color: #fff; border-radius: 5px; border-top: 5px solid #48c774; box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1); }}
+                  h1 {{ color: #48c774; margin-top: 0; }}
+                  .logo {{ text-align: center; margin-bottom: 20px; }}
+                  .logo img {{ width: 150px; height: auto; }}
+                  .server-section {{ background-color: #f5f5f5; padding: 15px; border-radius: 4px; margin: 20px 0; }}
+                  .server-name {{ font-size: 18px; font-weight: bold; color: #333; }}
+                  .resolution-item {{ margin: 10px 0; padding: 10px; border-left: 4px solid #48c774; background-color: #fff; }}
+                  .metric-info {{ margin-top: 5px; font-size: 14px; color: #666; }}
+                  .duration {{ color: #777; font-style: italic; }}
+                  .timestamp {{ color: #777; font-size: 14px; margin-top: 20px; }}
+                  .footer {{ margin-top: 30px; padding-top: 20px; border-top: 1px solid #eee; font-size: 12px; color: #777; }}
+                  .summary {{ background-color: #f8f9fa; padding: 15px; border-radius: 4px; margin: 20px 0; }}
+                  .summary-count {{ font-size: 24px; font-weight: bold; color: #48c774; }}
+                  .summary-label {{ font-size: 14px; color: #666; }}
+                </style>
+              </head>
+              <body>
+                <div class="container">
+                  <div class="logo">
+                    <img src="https://raw.githubusercontent.com/bnesim/heimdall-monitoring/refs/heads/main/HEIMDALL.png" alt="Heimdall Logo">
+                  </div>
+                  <h1>✅ Alerts Resolved</h1>
+                  
+                  <div class="summary">
+                    <div class="summary-count">{total_resolved}</div>
+                    <div class="summary-label">Issues Resolved on {len(resolutions_by_server)} server(s)</div>
+                  </div>
+            """
+            
+            # Add resolutions by server
+            for server_key, resolutions in sorted(resolutions_by_server.items()):
+                html += f"""
+                  <div class="server-section">
+                    <div class="server-name">{server_key}</div>
+                """
+                
+                for resolution in resolutions:
+                    html += f"""
+                    <div class="resolution-item">
+                      <strong>{resolution['metric']}</strong> has returned to normal
+                      <div class="metric-info">
+                        Current: {resolution['current_value']:.1f}% (threshold: {resolution['threshold']}%)
+                        <br><span class="duration">Problem duration: {resolution['duration']}</span>
+                      </div>
+                    </div>
+                    """
+                
+                html += "</div>"
+            
+            html += f"""
+                  <div class="timestamp">
+                    Resolved: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
+                  </div>
+                  
+                  {open_alerts_html}
+                  
+                  <div class="footer">
+                    This is an automated resolution notification from Heimdall monitoring system.
+                  </div>
+                </div>
+              </body>
+            </html>
+            """
+            
+            msg.attach(MIMEText(html, 'html'))
+            
+            # Send the email
+            with smtplib.SMTP(self.config['email']['smtp_server'], 
+                            self.config['email']['smtp_port']) as server:
+                if self.config['email']['use_tls']:
+                    server.starttls()
+                server.login(self.config['email']['username'],
+                           self.config['email']['password'])
+                server.send_message(msg)
+            
+            logger.info(f"Batch resolution email sent with {total_resolved} resolved alerts")
+            return True
+        except Exception as e:
+            logger.error(f"Failed to send batch resolution email: {str(e)}")
+            return False
+    
+    def _send_batch_telegram_alerts(self, alerts_by_server):
+        """Send batch Telegram message with all alerts."""
+        try:
+            # Count alerts
+            new_count = sum(len(alerts["new"]) for alerts in alerts_by_server.values())
+            recurring_count = sum(len(alerts["recurring"]) for alerts in alerts_by_server.values())
+            
+            # Build message
+            if new_count > 0 and recurring_count > 0:
+                message = f"<b>⚠️ HEIMDALL ALERT SUMMARY</b>\n\n"
+                message += f"<b>{new_count}</b> new issues, <b>{recurring_count}</b> recurring issues\n"
+            elif new_count > 0:
+                message = f"<b>⚠️ NEW HEIMDALL ALERTS</b>\n\n"
+                message += f"<b>{new_count}</b> new issues detected\n"
+            else:
+                message = f"<b>⚠️ RECURRING HEIMDALL ALERTS</b>\n\n"
+                message += f"<b>{recurring_count}</b> issues persist\n"
+            
+            message += f"<b>{len(alerts_by_server)}</b> servers affected\n\n"
+            
+            # Add alerts by server
+            for server_key, alerts in sorted(alerts_by_server.items()):
+                if not alerts["new"] and not alerts["recurring"]:
+                    continue
+                
+                message += f"<b>{server_key}</b>\n"
+                
+                # Add new alerts
+                for alert in alerts["new"]:
+                    message += f"  🔴 <b>NEW:</b> {alert['message']}\n"
+                
+                # Add recurring alerts
+                for alert in alerts["recurring"]:
+                    message += f"  🟡 <b>RECURRING:</b> {alert['message']}\n"
+                
+                message += "\n"
+            
+            # Add open alerts
+            message += self.format_open_alerts_text()
+            
+            # Send to all subscribers
+            sent_count = 0
+            for subscriber in self.telegram_bot.subscribers:
+                if self.telegram_bot.send_message(subscriber['chat_id'], message):
+                    sent_count += 1
+            
+            logger.info(f"Batch alert sent to {sent_count} Telegram subscribers")
+            return sent_count > 0
+        except Exception as e:
+            logger.error(f"Failed to send batch Telegram alerts: {str(e)}")
+            return False
+    
+    def _send_batch_telegram_resolutions(self, resolutions_by_server):
+        """Send batch Telegram message with all resolutions."""
+        try:
+            # Count resolutions
+            total_resolved = sum(len(resolutions) for resolutions in resolutions_by_server.values())
+            
+            message = f"<b>✅ HEIMDALL RESOLVED</b>\n\n"
+            message += f"<b>{total_resolved}</b> issues resolved on <b>{len(resolutions_by_server)}</b> server(s)\n\n"
+            
+            # Add resolutions by server
+            for server_key, resolutions in sorted(resolutions_by_server.items()):
+                message += f"<b>{server_key}</b>\n"
+                
+                for resolution in resolutions:
+                    message += f"  ✅ <b>{resolution['metric']}</b>: {resolution['current_value']:.1f}% (threshold: {resolution['threshold']}%)\n"
+                    message += f"     Duration: {resolution['duration']}\n"
+                
+                message += "\n"
+            
+            # Add open alerts
+            message += self.format_open_alerts_text()
+            
+            # Send to all subscribers
+            sent_count = 0
+            for subscriber in self.telegram_bot.subscribers:
+                if self.telegram_bot.send_message(subscriber['chat_id'], message):
+                    sent_count += 1
+            
+            logger.info(f"Batch resolution sent to {sent_count} Telegram subscribers")
+            return sent_count > 0
+        except Exception as e:
+            logger.error(f"Failed to send batch Telegram resolutions: {str(e)}")
+            return False
