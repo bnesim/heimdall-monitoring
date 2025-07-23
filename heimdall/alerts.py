@@ -426,7 +426,7 @@ class AlertManager:
                   </div>
                   
                   <div class="alert-message">
-                    {message}
+                    {message.replace(chr(10), '<br>')}
                   </div>
                   
                   <div class="timestamp">
@@ -770,7 +770,7 @@ If you're receiving this, your Telegram configuration is working correctly!"""
                     html += f"""
                     <div class="alert-item new-alert">
                       <span class="alert-type type-new">NEW</span>
-                      {alert['message']}
+                      {alert['message'].replace(chr(10), '<br>')}
                     </div>
                     """
                 
@@ -779,7 +779,7 @@ If you're receiving this, your Telegram configuration is working correctly!"""
                     html += f"""
                     <div class="alert-item recurring-alert">
                       <span class="alert-type type-recurring">RECURRING</span>
-                      {alert['message']}
+                      {alert['message'].replace(chr(10), '<br>')}
                     </div>
                     """
                 

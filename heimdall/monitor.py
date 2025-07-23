@@ -241,8 +241,38 @@ class ServerMonitor:
                 if cpu_usage >= self.cpu_threshold:
                     logger.warning(f"{nickname} ({hostname}): High CPU usage: {cpu_usage:.1f}%")
                     print(Colors.red(f"{cpu_usage:.1f}% (ALERT - above threshold)"))
-                    self.alert_manager.send_alert(nickname, hostname, 
-                        f"CPU usage at {cpu_usage:.1f}%, threshold is {self.cpu_threshold}%")
+                    
+                    # Get process diagnostics for high CPU
+                    alert_msg = f"CPU usage at {cpu_usage:.1f}%, threshold is {self.cpu_threshold}%"
+                    
+                    try:
+                        print(f"  Getting process diagnostics...")
+                        # Get top processes by CPU usage
+                        num_processes = 10
+                        diagnostics_cmd = f'''
+                        NUM_PROCESSES={num_processes}
+                        echo "Top $NUM_PROCESSES processes by CPU usage:"
+                        echo "------------------------------------------"
+                        # Try Linux ps first, fall back to BSD ps if that fails
+                        ps aux --sort=-%cpu 2>/dev/null | awk -v num="$NUM_PROCESSES" 'NR<=num+1{{printf "%-10s %-10s %-10s %-20s %.1f MB\\n", $2, $3, $4, $11, $6/1024}}' | sed '1s/^/PID        CPU%      MEM%      COMMAND            MEMORY(MB)\\n/' || \\
+                        ps aux | sort -rn -k 3 | head -n $((NUM_PROCESSES+1)) | awk 'NR<=11{{printf "%-10s %-10s %-10s %-20s %.1f MB\\n", $2, $3, $4, $11, $6/1024}}' | sed '1s/^/PID        CPU%      MEM%      COMMAND            MEMORY(MB)\\n/'
+                        '''
+                        
+                        stdin, stdout, stderr = client.exec_command(diagnostics_cmd)
+                        process_output = stdout.read().decode('utf-8', errors='replace').strip()
+                        
+                        if process_output:
+                            alert_msg += "\n\nProcess Diagnostics:\n" + process_output
+                            print(f"  {Colors.green('Process diagnostics completed')}")
+                        else:
+                            logger.warning(f"Failed to get process diagnostics")
+                            print(f"  {Colors.yellow('Process diagnostics not available')}")
+                            
+                    except Exception as e:
+                        logger.error(f"Error getting process diagnostics: {str(e)}")
+                        print(f"  {Colors.yellow('Process diagnostics failed: ' + str(e))}")
+                    
+                    self.alert_manager.send_alert(nickname, hostname, alert_msg)
                 else:
                     logger.info(f"{nickname} ({hostname}): CPU usage: {cpu_usage:.1f}%")
                     print(Colors.green(f"{cpu_usage:.1f}%"))
