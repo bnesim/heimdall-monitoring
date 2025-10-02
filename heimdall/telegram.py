@@ -61,17 +61,18 @@ class TelegramBot:
             if sub['chat_id'] == chat_id:
                 logger.info(f"User {chat_id} already subscribed")
                 return False
-        
-        # Add new subscriber
+
+        # Add new subscriber (default: not approved)
         subscriber = {
             'chat_id': chat_id,
             'username': username,
             'first_name': first_name,
-            'subscribed_at': datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            'subscribed_at': datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            'approved': False
         }
         self.subscribers.append(subscriber)
         self.save_subscribers()
-        logger.info(f"Added new Telegram subscriber: {username or first_name or chat_id}")
+        logger.info(f"Added new Telegram subscriber (pending approval): {username or first_name or chat_id}")
         return True
     
     def remove_subscriber(self, chat_id):
@@ -83,6 +84,34 @@ class TelegramBot:
                 logger.info(f"Removed Telegram subscriber: {removed.get('username', chat_id)}")
                 return True
         return False
+
+    def approve_subscriber(self, chat_id):
+        """Approve a subscriber."""
+        for sub in self.subscribers:
+            if sub['chat_id'] == chat_id:
+                sub['approved'] = True
+                self.save_subscribers()
+                logger.info(f"Approved Telegram subscriber: {sub.get('username') or sub.get('first_name') or chat_id}")
+                return True
+        return False
+
+    def disapprove_subscriber(self, chat_id):
+        """Disapprove a subscriber."""
+        for sub in self.subscribers:
+            if sub['chat_id'] == chat_id:
+                sub['approved'] = False
+                self.save_subscribers()
+                logger.info(f"Disapproved Telegram subscriber: {sub.get('username') or sub.get('first_name') or chat_id}")
+                return True
+        return False
+
+    def get_pending_subscribers(self):
+        """Get list of subscribers pending approval."""
+        return [sub for sub in self.subscribers if not sub.get('approved', False)]
+
+    def get_approved_subscribers(self):
+        """Get list of approved subscribers."""
+        return [sub for sub in self.subscribers if sub.get('approved', False)]
     
     def send_message(self, chat_id, text, parse_mode='HTML'):
         """Send a message to a specific chat."""
@@ -101,13 +130,13 @@ class TelegramBot:
             return False
     
     def send_alert_to_all(self, nickname, hostname, message, is_new_alert=True, open_alerts_text=""):
-        """Send alert to all subscribers."""
+        """Send alert to all approved subscribers."""
         if not self.is_configured():
             return False
-        
+
         # Format the alert message
         alert_type = "🚨 NEW ALERT" if is_new_alert else "⚠️ RECURRING ALERT"
-        
+
         text = f"""<b>{alert_type}</b>
 
 <b>Server:</b> {nickname}
@@ -117,21 +146,22 @@ class TelegramBot:
 <b>Time:</b> {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}{open_alerts_text}
 
 <i>This is an automated alert from Heimdall Monitoring System.</i>"""
-        
-        # Send to all subscribers
+
+        # Send to approved subscribers only
+        approved_subscribers = self.get_approved_subscribers()
         sent_count = 0
-        for subscriber in self.subscribers:
+        for subscriber in approved_subscribers:
             if self.send_message(subscriber['chat_id'], text):
                 sent_count += 1
-        
-        logger.info(f"Sent Telegram alert to {sent_count}/{len(self.subscribers)} subscribers")
+
+        logger.info(f"Sent Telegram alert to {sent_count}/{len(approved_subscribers)} approved subscribers")
         return sent_count > 0
     
     def send_resolution_to_all(self, nickname, hostname, metric, current_value, threshold, duration_str, open_alerts_text=""):
-        """Send resolution notification to all subscribers."""
+        """Send resolution notification to all approved subscribers."""
         if not self.is_configured():
             return False
-        
+
         text = f"""<b>✅ ALERT RESOLVED</b>
 
 <b>Server:</b> {nickname}
@@ -144,14 +174,15 @@ class TelegramBot:
 <b>Resolved at:</b> {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
 
 <i>The issue has been resolved. System is back to normal.</i>{open_alerts_text}"""
-        
-        # Send to all subscribers
+
+        # Send to approved subscribers only
+        approved_subscribers = self.get_approved_subscribers()
         sent_count = 0
-        for subscriber in self.subscribers:
+        for subscriber in approved_subscribers:
             if self.send_message(subscriber['chat_id'], text):
                 sent_count += 1
-        
-        logger.info(f"Sent Telegram resolution to {sent_count}/{len(self.subscribers)} subscribers")
+
+        logger.info(f"Sent Telegram resolution to {sent_count}/{len(approved_subscribers)} approved subscribers")
         return sent_count > 0
     
     def process_update(self, update):
@@ -173,14 +204,13 @@ class TelegramBot:
                 if self.add_subscriber(chat_id, username, first_name):
                     welcome_msg = """🎉 <b>Welcome to Heimdall Monitoring!</b>
 
-You are now subscribed to server alerts. You will receive notifications when:
-• Server resources (CPU, Memory, Disk) exceed thresholds
-• Monitored services go down
-• Issues are resolved
+Your subscription request has been received and is <b>pending approval</b>.
+
+You will start receiving notifications once an administrator approves your subscription.
 
 Available commands:
 /status - Check your subscription status
-/unsubscribe - Stop receiving alerts
+/unsubscribe - Cancel your subscription
 /help - Show this help message"""
                     self.send_message(chat_id, welcome_msg)
                 else:
@@ -199,13 +229,21 @@ Available commands:
                     if sub['chat_id'] == chat_id:
                         subscriber = sub
                         break
-                
+
                 if subscriber:
+                    approved = subscriber.get('approved', False)
+                    status_emoji = "✅" if approved else "⏳"
+                    status_text = "Approved" if approved else "Pending Approval"
+
                     status_msg = f"""<b>Your Subscription Status</b>
 
-✅ <b>Status:</b> Active
+{status_emoji} <b>Status:</b> {status_text}
 📅 <b>Subscribed since:</b> {subscriber.get('subscribed_at', 'Unknown')}
 👥 <b>Total subscribers:</b> {len(self.subscribers)}"""
+
+                    if not approved:
+                        status_msg += "\n\n<i>You will start receiving alerts once an administrator approves your subscription.</i>"
+
                     self.send_message(chat_id, status_msg)
                 else:
                     self.send_message(chat_id, "❌ You are not subscribed. Use /start to subscribe.")

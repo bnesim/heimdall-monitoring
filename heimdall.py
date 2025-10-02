@@ -42,10 +42,11 @@ def interactive_menu(monitor):
         print("7. Configure Telegram bot")
         print("8. Configure OpenRouter AI")
         print("9. Run Telegram bot (for subscriptions)")
-        print("10. Exit")
-        
+        print("10. Manage Telegram subscribers (approve/disapprove)")
+        print("11. Exit")
+
         option = input("\nSelect an option: ").strip()
-        
+
         if option == '1':
             add_server(monitor)
         elif option == '2':
@@ -65,6 +66,8 @@ def interactive_menu(monitor):
         elif option == '9':
             run_telegram_bot_interactive()
         elif option == '10':
+            manage_telegram_subscribers()
+        elif option == '11':
             print(f"\n{Colors.green('Heimdall will continue watching your realms from Asgard. Farewell!')}")
             logger.info("Exiting Heimdall")
             break
@@ -530,6 +533,136 @@ def configure_telegram():
             except Exception as e:
                 logger.error(f"Error sending test message: {str(e)}")
                 print(f"\n{Colors.red('Error sending test message: ' + str(e))}")
+
+
+def manage_telegram_subscribers():
+    """Manage Telegram subscriber approvals"""
+    config = load_config()
+
+    if not config or not config.get('telegram', {}).get('enabled', False):
+        print(f"\n{Colors.red('Telegram bot is not configured.')}")
+        return
+
+    from heimdall.telegram import TelegramBot
+    bot = TelegramBot(config)
+
+    while True:
+        print(f"\n{Colors.green(Colors.bold('Telegram Subscriber Management'))}")
+        print("="*35)
+
+        pending = bot.get_pending_subscribers()
+        approved = bot.get_approved_subscribers()
+
+        print(f"\n{Colors.yellow('Pending Subscribers:')} ({len(pending)})")
+        if pending:
+            for i, sub in enumerate(pending):
+                username = sub.get('username', 'N/A')
+                first_name = sub.get('first_name', 'N/A')
+                subscribed_at = sub.get('subscribed_at', 'Unknown')
+                print(f"  {i+1}. {first_name} (@{username}) - Chat ID: {sub['chat_id']}")
+                print(f"     Subscribed: {subscribed_at}")
+        else:
+            print(f"  {Colors.green('No pending subscribers')}")
+
+        print(f"\n{Colors.green('Approved Subscribers:')} ({len(approved)})")
+        if approved:
+            for i, sub in enumerate(approved):
+                username = sub.get('username', 'N/A')
+                first_name = sub.get('first_name', 'N/A')
+                subscribed_at = sub.get('subscribed_at', 'Unknown')
+                print(f"  {i+1}. {first_name} (@{username}) - Chat ID: {sub['chat_id']}")
+                print(f"     Subscribed: {subscribed_at}")
+        else:
+            print(f"  {Colors.yellow('No approved subscribers')}")
+
+        print(f"\n{Colors.blue('Actions:')}")
+        print("1. Approve a pending subscriber")
+        print("2. Disapprove an approved subscriber")
+        print("3. Remove a subscriber")
+        print("4. Back to main menu")
+
+        action = input("\nSelect an action: ").strip()
+
+        if action == '1':
+            if not pending:
+                print(f"\n{Colors.yellow('No pending subscribers to approve.')}")
+                continue
+
+            selection = input("\nEnter the number of the subscriber to approve: ").strip()
+            try:
+                index = int(selection) - 1
+                if 0 <= index < len(pending):
+                    sub = pending[index]
+                    if bot.approve_subscriber(sub['chat_id']):
+                        print(f"\n{Colors.green('Subscriber approved successfully!')}")
+                        # Notify the user
+                        bot.send_message(sub['chat_id'],
+                            "✅ Your subscription has been <b>approved</b>!\n\n"
+                            "You will now receive alerts from Heimdall Monitoring System.")
+                    else:
+                        print(f"\n{Colors.red('Failed to approve subscriber.')}")
+                else:
+                    print(f"\n{Colors.red('Invalid selection.')}")
+            except ValueError:
+                print(f"\n{Colors.red('Please enter a valid number.')}")
+
+        elif action == '2':
+            if not approved:
+                print(f"\n{Colors.yellow('No approved subscribers to disapprove.')}")
+                continue
+
+            selection = input("\nEnter the number of the subscriber to disapprove: ").strip()
+            try:
+                index = int(selection) - 1
+                if 0 <= index < len(approved):
+                    sub = approved[index]
+                    if bot.disapprove_subscriber(sub['chat_id']):
+                        print(f"\n{Colors.green('Subscriber disapproved successfully!')}")
+                        # Notify the user
+                        bot.send_message(sub['chat_id'],
+                            "⚠️ Your subscription has been <b>disapproved</b>.\n\n"
+                            "You will no longer receive alerts from Heimdall Monitoring System.")
+                    else:
+                        print(f"\n{Colors.red('Failed to disapprove subscriber.')}")
+                else:
+                    print(f"\n{Colors.red('Invalid selection.')}")
+            except ValueError:
+                print(f"\n{Colors.red('Please enter a valid number.')}")
+
+        elif action == '3':
+            all_subs = bot.subscribers
+            if not all_subs:
+                print(f"\n{Colors.yellow('No subscribers to remove.')}")
+                continue
+
+            print(f"\n{Colors.yellow('All Subscribers:')}")
+            for i, sub in enumerate(all_subs):
+                username = sub.get('username', 'N/A')
+                first_name = sub.get('first_name', 'N/A')
+                approved_status = "✅ Approved" if sub.get('approved', False) else "⏳ Pending"
+                print(f"  {i+1}. {first_name} (@{username}) - {approved_status}")
+
+            selection = input("\nEnter the number of the subscriber to remove: ").strip()
+            try:
+                index = int(selection) - 1
+                if 0 <= index < len(all_subs):
+                    sub = all_subs[index]
+                    if bot.remove_subscriber(sub['chat_id']):
+                        print(f"\n{Colors.green('Subscriber removed successfully!')}")
+                        # Notify the user
+                        bot.send_message(sub['chat_id'],
+                            "You have been removed from Heimdall Monitoring alerts.")
+                    else:
+                        print(f"\n{Colors.red('Failed to remove subscriber.')}")
+                else:
+                    print(f"\n{Colors.red('Invalid selection.')}")
+            except ValueError:
+                print(f"\n{Colors.red('Please enter a valid number.')}")
+
+        elif action == '4':
+            break
+        else:
+            print(f"\n{Colors.red('Invalid action.')}")
 
 
 def configure_smtp():
