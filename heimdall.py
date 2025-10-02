@@ -559,9 +559,15 @@ def manage_telegram_subscribers():
                 username = sub.get('username') or 'N/A'
                 first_name = sub.get('first_name') or 'N/A'
                 subscribed_at = sub.get('subscribed_at', 'Unknown')
-                # Handle Unicode characters safely
-                display_line = f"  {i+1}. {first_name} (@{username}) - Chat ID: {sub['chat_id']}"
-                print(display_line.encode('utf-8', errors='replace').decode('utf-8'))
+                # Handle Unicode characters safely - convert to ASCII representation
+                try:
+                    display_line = f"  {i+1}. {first_name} (@{username}) - Chat ID: {sub['chat_id']}"
+                    print(display_line)
+                except UnicodeEncodeError:
+                    # Fallback to ASCII-safe representation
+                    first_name_safe = first_name.encode('ascii', errors='replace').decode('ascii')
+                    username_safe = username.encode('ascii', errors='replace').decode('ascii')
+                    print(f"  {i+1}. {first_name_safe} (@{username_safe}) - Chat ID: {sub['chat_id']}")
                 print(f"     Subscribed: {subscribed_at}")
         else:
             print(f"  {Colors.green('No pending subscribers')}")
@@ -572,9 +578,15 @@ def manage_telegram_subscribers():
                 username = sub.get('username') or 'N/A'
                 first_name = sub.get('first_name') or 'N/A'
                 subscribed_at = sub.get('subscribed_at', 'Unknown')
-                # Handle Unicode characters safely
-                display_line = f"  {i+1}. {first_name} (@{username}) - Chat ID: {sub['chat_id']}"
-                print(display_line.encode('utf-8', errors='replace').decode('utf-8'))
+                # Handle Unicode characters safely - convert to ASCII representation
+                try:
+                    display_line = f"  {i+1}. {first_name} (@{username}) - Chat ID: {sub['chat_id']}"
+                    print(display_line)
+                except UnicodeEncodeError:
+                    # Fallback to ASCII-safe representation
+                    first_name_safe = first_name.encode('ascii', errors='replace').decode('ascii')
+                    username_safe = username.encode('ascii', errors='replace').decode('ascii')
+                    print(f"  {i+1}. {first_name_safe} (@{username_safe}) - Chat ID: {sub['chat_id']}")
                 print(f"     Subscribed: {subscribed_at}")
         else:
             print(f"  {Colors.yellow('No approved subscribers')}")
@@ -643,10 +655,15 @@ def manage_telegram_subscribers():
             for i, sub in enumerate(all_subs):
                 username = sub.get('username') or 'N/A'
                 first_name = sub.get('first_name') or 'N/A'
-                approved_status = "✅ Approved" if sub.get('approved', False) else "⏳ Pending"
-                # Handle Unicode characters safely
-                display_line = f"  {i+1}. {first_name} (@{username}) - {approved_status}"
-                print(display_line.encode('utf-8', errors='replace').decode('utf-8'))
+                approved_status = "Approved" if sub.get('approved', False) else "Pending"
+                # Handle Unicode characters safely - convert to ASCII representation
+                try:
+                    print(f"  {i+1}. {first_name} (@{username}) - {approved_status}")
+                except UnicodeEncodeError:
+                    # Fallback to ASCII-safe representation
+                    first_name_safe = first_name.encode('ascii', errors='replace').decode('ascii')
+                    username_safe = username.encode('ascii', errors='replace').decode('ascii')
+                    print(f"  {i+1}. {first_name_safe} (@{username_safe}) - {approved_status}")
 
             selection = input("\nEnter the number of the subscriber to remove: ").strip()
             try:
