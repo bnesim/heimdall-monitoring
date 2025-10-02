@@ -556,10 +556,12 @@ def manage_telegram_subscribers():
         print(f"\n{Colors.yellow('Pending Subscribers:')} ({len(pending)})")
         if pending:
             for i, sub in enumerate(pending):
-                username = sub.get('username', 'N/A')
-                first_name = sub.get('first_name', 'N/A')
+                username = sub.get('username') or 'N/A'
+                first_name = sub.get('first_name') or 'N/A'
                 subscribed_at = sub.get('subscribed_at', 'Unknown')
-                print(f"  {i+1}. {first_name} (@{username}) - Chat ID: {sub['chat_id']}")
+                # Handle Unicode characters safely
+                display_line = f"  {i+1}. {first_name} (@{username}) - Chat ID: {sub['chat_id']}"
+                print(display_line.encode('utf-8', errors='replace').decode('utf-8'))
                 print(f"     Subscribed: {subscribed_at}")
         else:
             print(f"  {Colors.green('No pending subscribers')}")
@@ -567,10 +569,12 @@ def manage_telegram_subscribers():
         print(f"\n{Colors.green('Approved Subscribers:')} ({len(approved)})")
         if approved:
             for i, sub in enumerate(approved):
-                username = sub.get('username', 'N/A')
-                first_name = sub.get('first_name', 'N/A')
+                username = sub.get('username') or 'N/A'
+                first_name = sub.get('first_name') or 'N/A'
                 subscribed_at = sub.get('subscribed_at', 'Unknown')
-                print(f"  {i+1}. {first_name} (@{username}) - Chat ID: {sub['chat_id']}")
+                # Handle Unicode characters safely
+                display_line = f"  {i+1}. {first_name} (@{username}) - Chat ID: {sub['chat_id']}"
+                print(display_line.encode('utf-8', errors='replace').decode('utf-8'))
                 print(f"     Subscribed: {subscribed_at}")
         else:
             print(f"  {Colors.yellow('No approved subscribers')}")
@@ -637,10 +641,12 @@ def manage_telegram_subscribers():
 
             print(f"\n{Colors.yellow('All Subscribers:')}")
             for i, sub in enumerate(all_subs):
-                username = sub.get('username', 'N/A')
-                first_name = sub.get('first_name', 'N/A')
+                username = sub.get('username') or 'N/A'
+                first_name = sub.get('first_name') or 'N/A'
                 approved_status = "✅ Approved" if sub.get('approved', False) else "⏳ Pending"
-                print(f"  {i+1}. {first_name} (@{username}) - {approved_status}")
+                # Handle Unicode characters safely
+                display_line = f"  {i+1}. {first_name} (@{username}) - {approved_status}"
+                print(display_line.encode('utf-8', errors='replace').decode('utf-8'))
 
             selection = input("\nEnter the number of the subscriber to remove: ").strip()
             try:
