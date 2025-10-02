@@ -63,36 +63,45 @@ class AlertManager:
     
     def end_session(self):
         """End the alert session and send batch notifications."""
+        logger.info("end_session() called")
         if not self.session_active:
+            logger.info("Session not active, returning")
             return
-        
+
         self.session_active = False
-        logger.debug(f"Ending alert session - New: {len(self.session_new_alerts)}, Resolved: {len(self.session_resolved_alerts)}, Recurring: {len(self.session_recurring_alerts)}")
-        
+        logger.info(f"Ending alert session - New: {len(self.session_new_alerts)}, Resolved: {len(self.session_resolved_alerts)}, Recurring: {len(self.session_recurring_alerts)}")
+
         # Send batch notifications
         notifications_sent = False
-        
+
         # Send new/recurring alerts together
         if self.session_new_alerts or self.session_recurring_alerts:
+            logger.info("Sending batch alerts (new/recurring)")
             if self._send_batch_alerts():
                 notifications_sent = True
-        
+            logger.info("Finished sending batch alerts")
+
         # Send resolved alerts
         if self.session_resolved_alerts:
+            logger.info("Sending batch resolutions")
             if self._send_batch_resolutions():
                 notifications_sent = True
-        
+            logger.info("Finished sending batch resolutions")
+
         # Reset cooldown for all active alerts if we sent any notifications
         if notifications_sent:
+            logger.info("Resetting cooldowns for active alerts")
             now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             self.reset_all_alert_cooldowns(now_str)
             self.save_alert_status()
             logger.info("Reset cooldown for all active alerts after sending batch notifications")
-        
+
         # Clear session data
+        logger.info("Clearing session data")
         self.session_new_alerts = []
         self.session_resolved_alerts = []
         self.session_recurring_alerts = []
+        logger.info("end_session() completed")
     
     def get_open_alerts(self):
         """Get a list of all currently open alerts."""
@@ -625,35 +634,44 @@ If you're receiving this, your Telegram configuration is working correctly!"""
     
     def _send_batch_alerts(self):
         """Send batch email and Telegram for all queued alerts."""
+        logger.info("_send_batch_alerts() called")
         if not self.session_new_alerts and not self.session_recurring_alerts:
+            logger.info("No alerts to send")
             return False
-        
+
         all_alerts = self.session_new_alerts + self.session_recurring_alerts
-        
+        logger.info(f"Processing {len(all_alerts)} total alerts")
+
         # Group alerts by server for better organization
         alerts_by_server = {}
         for alert in all_alerts:
             server_key = f"{alert['server']} ({alert['hostname']})"
             if server_key not in alerts_by_server:
                 alerts_by_server[server_key] = {"new": [], "recurring": []}
-            
+
             if alert['is_new']:
                 alerts_by_server[server_key]["new"].append(alert)
             else:
                 alerts_by_server[server_key]["recurring"].append(alert)
-        
+
+        logger.info(f"Grouped into {len(alerts_by_server)} servers")
         notifications_sent = False
-        
+
         # Send batch email
         if self.config and self.config.get('email', {}).get('enabled', False):
+            logger.info("Sending batch email alerts")
             if self._send_batch_email_alerts(alerts_by_server):
                 notifications_sent = True
-        
+            logger.info("Finished batch email alerts")
+
         # Send batch Telegram
         if self.telegram_bot.is_configured():
+            logger.info("Sending batch Telegram alerts")
             if self._send_batch_telegram_alerts(alerts_by_server):
                 notifications_sent = True
-        
+            logger.info("Finished batch Telegram alerts")
+
+        logger.info(f"_send_batch_alerts() completed - notifications_sent: {notifications_sent}")
         return notifications_sent
     
     def _send_batch_resolutions(self):
