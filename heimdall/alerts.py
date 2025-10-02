@@ -962,10 +962,18 @@ If you're receiving this, your Telegram configuration is working correctly!"""
 
             # Send to approved subscribers only
             approved_subscribers = self.telegram_bot.get_approved_subscribers()
+            logger.info(f"Sending batch alert to {len(approved_subscribers)} approved Telegram subscribers")
+
             sent_count = 0
             for subscriber in approved_subscribers:
-                if self.telegram_bot.send_message(subscriber['chat_id'], message):
+                chat_id = subscriber['chat_id']
+                username = subscriber.get('username') or subscriber.get('first_name') or 'Unknown'
+                logger.info(f"Sending batch alert to {username} (chat_id: {chat_id})")
+                if self.telegram_bot.send_message(chat_id, message):
                     sent_count += 1
+                    logger.info(f"Successfully sent batch alert to {username} (chat_id: {chat_id})")
+                else:
+                    logger.warning(f"Failed to send batch alert to {username} (chat_id: {chat_id})")
 
             logger.info(f"Batch alert sent to {sent_count}/{len(approved_subscribers)} approved Telegram subscribers")
             return sent_count > 0
@@ -997,10 +1005,18 @@ If you're receiving this, your Telegram configuration is working correctly!"""
 
             # Send to approved subscribers only
             approved_subscribers = self.telegram_bot.get_approved_subscribers()
+            logger.info(f"Sending batch resolution to {len(approved_subscribers)} approved Telegram subscribers")
+
             sent_count = 0
             for subscriber in approved_subscribers:
-                if self.telegram_bot.send_message(subscriber['chat_id'], message):
+                chat_id = subscriber['chat_id']
+                username = subscriber.get('username') or subscriber.get('first_name') or 'Unknown'
+                logger.info(f"Sending batch resolution to {username} (chat_id: {chat_id})")
+                if self.telegram_bot.send_message(chat_id, message):
                     sent_count += 1
+                    logger.info(f"Successfully sent batch resolution to {username} (chat_id: {chat_id})")
+                else:
+                    logger.warning(f"Failed to send batch resolution to {username} (chat_id: {chat_id})")
 
             logger.info(f"Batch resolution sent to {sent_count}/{len(approved_subscribers)} approved Telegram subscribers")
             return sent_count > 0
