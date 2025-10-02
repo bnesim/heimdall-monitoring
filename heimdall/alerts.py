@@ -959,14 +959,15 @@ If you're receiving this, your Telegram configuration is working correctly!"""
             
             # Add open alerts
             message += self.format_open_alerts_text()
-            
-            # Send to all subscribers
+
+            # Send to approved subscribers only
+            approved_subscribers = self.telegram_bot.get_approved_subscribers()
             sent_count = 0
-            for subscriber in self.telegram_bot.subscribers:
+            for subscriber in approved_subscribers:
                 if self.telegram_bot.send_message(subscriber['chat_id'], message):
                     sent_count += 1
-            
-            logger.info(f"Batch alert sent to {sent_count} Telegram subscribers")
+
+            logger.info(f"Batch alert sent to {sent_count}/{len(approved_subscribers)} approved Telegram subscribers")
             return sent_count > 0
         except Exception as e:
             logger.error(f"Failed to send batch Telegram alerts: {str(e)}")
@@ -993,14 +994,15 @@ If you're receiving this, your Telegram configuration is working correctly!"""
             
             # Add open alerts
             message += self.format_open_alerts_text()
-            
-            # Send to all subscribers
+
+            # Send to approved subscribers only
+            approved_subscribers = self.telegram_bot.get_approved_subscribers()
             sent_count = 0
-            for subscriber in self.telegram_bot.subscribers:
+            for subscriber in approved_subscribers:
                 if self.telegram_bot.send_message(subscriber['chat_id'], message):
                     sent_count += 1
-            
-            logger.info(f"Batch resolution sent to {sent_count} Telegram subscribers")
+
+            logger.info(f"Batch resolution sent to {sent_count}/{len(approved_subscribers)} approved Telegram subscribers")
             return sent_count > 0
         except Exception as e:
             logger.error(f"Failed to send batch Telegram resolutions: {str(e)}")
